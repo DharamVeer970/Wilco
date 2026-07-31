@@ -176,11 +176,13 @@ def open_file(name, kind="any"):
     rather than guessed — ask which one, then call again with a fuller name."""
     kinds = KINDS if kind in ("any", "", None) else (kind,)
     hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
+    
     if not hits:
         return f"No file matching {name}."
     if len(hits) > 1:
         listed = "; ".join(f"{n} ({k})" for k, n, p in hits[:10])
         return f"{len(hits)} files match: {listed}. Ask which one, then call open_file again."
+
     kind_found, found_name, path = hits[0]
     files.open_file(path)
     context.file = path
