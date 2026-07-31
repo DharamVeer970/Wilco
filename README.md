@@ -51,7 +51,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Create a `.env` next to `main.py`:
+Copy [.env.example](.env.example) to `.env` and fill it in:
 
 ```ini
 COHERE_API_KEY=...
