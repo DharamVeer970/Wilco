@@ -1,0 +1,6 @@
+.env
+test_jarvis.py
+__pycache__/
+*.pyc
+.pytest_cache/
+Openai/
