@@ -92,7 +92,7 @@ if pip tries to compile it.
 | "what's my ip" / "how much disk space" | Machine state, spoken |
 | "shut down" / "restart" | Asks first, then does it |
 | "reset chat" / "start over" | Clears the conversation and the context |
-| "jarvis quit" | Exits |
+| "wilco quit" | Exits |
 | anything else | The agent — acts, answers, or just talks |
 
 Ambiguity is never auto-resolved. "open python" lists the matches and asks; answer with a
@@ -232,14 +232,14 @@ was tried and returned a 400 on the same tool schema.
 |---|---|---|
 | `HUGGINGFACE_API_KEY` | *required* | Whisper speech-to-text |
 | `COHERE_API_KEY` | *required for the default provider* | Chat + tool calling |
-| `JARVIS_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
-| `JARVIS_ROOT` | *(every drive)* | `;`-separated folders to limit the file scan to |
+| `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
+| `WILCO_ROOT` | *(every drive)* | `;`-separated folders to limit the file scan to |
 
-`JARVIS_PAUSE` is how long you may go quiet mid-sentence. Every microphone and room differs,
+`WILCO_PAUSE` is how long you may go quiet mid-sentence. Every microphone and room differs,
 so tune it: raise it if you're still being cut off, lower it if replies feel sluggish.
 
 ```ini
-JARVIS_PAUSE=3.5
+WILCO_PAUSE=3.5
 ```
 
 ## Known limits

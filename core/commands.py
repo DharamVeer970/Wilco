@@ -52,8 +52,10 @@ MEDIA_WORDS = {"pause": "play_pause", "resume": "play_pause", "play_pause": "pla
                "next": "next", "skip": "next", "previous": "previous", "back": "previous",
                "stop": "stop"}
 STRIP = " .,!?;:'\""
+# Whisper rarely spells an uncommon name the same way twice — add what yours actually hears
+NAME = r"(?:wilco|wilko|will\s?co)"  # grouped, or a suffix would bind to the last alternative only
 
-# what Jarvis is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
+# what Wilco is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
 _pending = None
 
 
@@ -474,11 +476,11 @@ def do(action, target):
 # "can you please just open notepad for me" -> "open notepad": every fullmatch below
 # only ever saw the polite wrapper, so the whole command fell through to chat
 POLITE = re.compile(
-    r"^(?:hey\s+|ok(?:ay)?\s+)?(?:jarvis[\s,]*)?"
+    r"^(?:hey\s+|ok(?:ay)?\s+)?(?:" + NAME + r"[\s,]*)?"
     r"(?:(?:can|could|would|will)\s+(?:you|u)\s+)?"
     r"(?:(?:i\s+(?:want|need)\s+(?:you\s+)?to|i'?d\s+like\s+(?:you\s+)?to)\s+)?"
     r"(?:please\s+|just\s+|kindly\s+)*")
-TRAILING = re.compile(r"(?:[\s,]+(?:please|for\s+me|mate|buddy|bro|now|jarvis|thanks?))+$")
+TRAILING = re.compile(r"(?:[\s,]+(?:please|for\s+me|mate|buddy|bro|now|" + NAME + r"|thanks?))+$")
 
 
 def _bare(query):
@@ -602,7 +604,7 @@ def _close(name):
 
     target = name
     if name in ITSELF:
-        # "close the app" means the one in front, whether or not Jarvis is what opened it
+        # "close the app" means the one in front, whether or not Wilco is what opened it
         target = context.app or system.foreground_window()[1]
     if not target:
         speak("Close what? Nothing's in front and I haven't opened anything.")
@@ -623,7 +625,7 @@ def _dispatch(query, allow_chat=True):
     spoken = query.strip(STRIP)
     query = _bare(spoken)
 
-    if re.fullmatch(r"(?:jarvis[ ,]*)?(?:quit|exit|goodbye|bye)", query):
+    if re.fullmatch(r"(?:" + NAME + r"[ ,]*)?(?:quit|exit|goodbye|bye)", query):
         speak("See you later!")
         return False
 

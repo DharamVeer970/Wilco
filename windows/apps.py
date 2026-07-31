@@ -31,7 +31,7 @@ ALIASES = {
 @lru_cache(maxsize=1)
 def index():
     """{lowercase name: (display name, launch id)} for every app Windows can launch."""
-    # ponytail: cached for the session, so restart Jarvis to pick up new installs
+    # ponytail: cached for the session, so restart Wilco to pick up new installs
     shell = win32com.client.Dispatch("Shell.Application")
     return {i.Name.lower(): (i.Name, i.Path) for i in shell.NameSpace("shell:AppsFolder").Items()}
 

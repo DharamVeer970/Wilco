@@ -276,10 +276,10 @@ def open_windows_settings(page=""):
 def wifi_switch(on):
     """Turn the Wi-Fi adapter on or off. Wi-Fi ONLY — this does nothing for Bluetooth,
     airplane mode or mobile data. For those, open the settings page and use click_control on
-    the switch. Needs Jarvis to be running as administrator."""
+    the switch. Needs Wilco to be running as administrator."""
     turn_on = on in (True, "true", "True", "on", 1)
     if not system.wifi(turn_on):
-        return "That needs administrator rights — Jarvis isn't elevated."
+        return "That needs administrator rights — Wilco isn't elevated."
     return f"Wi-Fi turned {'on' if turn_on else 'off'}."
 
 

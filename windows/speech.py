@@ -6,10 +6,10 @@ from huggingface_hub import InferenceClient
 
 from config import hf_token, stt_model
 
-# How long you can go quiet mid-sentence before Jarvis decides you've finished. Thinking
+# How long you can go quiet mid-sentence before Wilco decides you've finished. Thinking
 # pauses are normal in speech, and cutting at 0.8s chopped sentences in half and acted on the
-# fragment. Every real microphone and room is different, so this is a knob: JARVIS_PAUSE.
-PAUSE_SECONDS = float(os.environ.get("JARVIS_PAUSE", 2.5))
+# fragment. Every real microphone and room is different, so this is a knob: WILCO_PAUSE.
+PAUSE_SECONDS = float(os.environ.get("WILCO_PAUSE", 2.5))
 MIN_PHRASE_SECONDS = 0.4
 MAX_PHRASE_SECONDS = 45  # a long sentence plus its pauses now fits inside one phrase
 LISTEN_TIMEOUT = 8  # stop waiting for speech to start instead of blocking forever
@@ -32,7 +32,7 @@ _calibrated = False
 
 
 def speak(text):
-    print(f"Jarvis: {text}")
+    print(f"Wilco: {text}")
     voice.Speak(text)
 
 

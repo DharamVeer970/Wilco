@@ -43,8 +43,8 @@ def _clean(stem):
 
 
 def _roots():
-    """JARVIS_ROOT (';'-separated) if set, else every drive — measured at ~3s for C: and D:."""
-    pinned = [p for p in os.environ.get("JARVIS_ROOT", "").split(";") if os.path.isdir(p)]
+    """WILCO_ROOT (';'-separated) if set, else every drive — measured at ~3s for C: and D:."""
+    pinned = [p for p in os.environ.get("WILCO_ROOT", "").split(";") if os.path.isdir(p)]
     return pinned or [f"{d}:\\" for d in string.ascii_uppercase if os.path.isdir(f"{d}:\\")]
 
 

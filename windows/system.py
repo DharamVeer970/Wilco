@@ -84,7 +84,7 @@ BROWSERS = ("chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium"
 
 
 def own_console():
-    """Jarvis's own console window — never a target, or it closes itself."""
+    """Wilco's own console window — never a target, or it closes itself."""
     return ctypes.windll.kernel32.GetConsoleWindow()
 
 

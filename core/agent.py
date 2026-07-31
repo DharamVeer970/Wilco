@@ -1,4 +1,4 @@
-"""The tool-calling loop — Jarvis's actual decision making.
+"""The tool-calling loop — Wilco's actual decision making.
 
 The old path classified one utterance into one action from a fixed enum, then handed back.
 That is why things got "understood" but nothing followed: no second step, no reading of the

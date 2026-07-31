@@ -7,7 +7,7 @@ up here with no work.
 
 Run it from an MCP client, not by hand:
 
-    {"mcpServers": {"wilco": {"command": "python", "args": ["d:/Codes/Projects/Jarvis/mcp_server.py"]}}}
+    {"mcpServers": {"wilco": {"command": "python", "args": ["C:/path/to/Wilco/mcp_server.py"]}}}
 """
 import asyncio
 
