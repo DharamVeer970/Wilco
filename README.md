@@ -204,7 +204,6 @@ so tune it: raise it if you're still being cut off, lower it if replies feel slu
 
 ```ini
 JARVIS_PAUSE=3.5
-JARVIS_ROOT=C:\Users\me\Documents;D:\Projects
 ```
 
 ## Known limits
