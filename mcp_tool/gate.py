@@ -1,17 +1,20 @@
-"""One dangerous action, parked until the user says yes out loud.
+"""One dangerous action per caller, parked until the user says yes out loud.
 
 Anything that writes, deletes or changes system state goes through _park() instead of
 running. The model relays the question, the next utterance answers it, and the model
 calls confirm_yes() or cancel_action(). Nothing here runs on its own.
 """
 
-_pending = None  # (spoken description, zero-arg callable)
+import contextvars
+
+# Keyed by caller, so two clients never confirm each other's action. The voice loop is "local".
+session = contextvars.ContextVar("session", default="local")
+_pending = {}  # session -> (spoken description, zero-arg callable)
 
 
 def _park(description, action):
     """Hold an action until confirmed. Returns what the model should tell the user."""
-    global _pending
-    _pending = (description, action)
+    _pending[session.get()] = (description, action)
     return (f"NOT DONE. This needs the user's spoken permission first. Ask them, in your own "
             f"words, whether to go ahead with: {description}. Do not claim it is done.")
 
@@ -19,11 +22,10 @@ def _park(description, action):
 def confirm_yes():
     """Run the action the user was just asked to confirm. Call this ONLY when they clearly
     agree — yes, yeah, go ahead, do it. Never call it on your own initiative."""
-    global _pending
-    if not _pending:
+    parked = _pending.pop(session.get(), None)
+    if not parked:
         return "There is nothing waiting to be confirmed."
-    description, action = _pending
-    _pending = None
+    description, action = parked
     try:
         result = action()
     except Exception as e:
@@ -33,9 +35,7 @@ def confirm_yes():
 
 def cancel_action():
     """Drop the action awaiting confirmation. Call this when the user says no, stop, or cancel."""
-    global _pending
-    if not _pending:
+    parked = _pending.pop(session.get(), None)
+    if not parked:
         return "There was nothing waiting."
-    description, _ = _pending
-    _pending = None
-    return f"Cancelled: {description}. Nothing was changed."
+    return f"Cancelled: {parked[0]}. Nothing was changed."

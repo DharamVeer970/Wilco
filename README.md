@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/tools-39-6E56CF" alt="39 tools">
+  <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
 
@@ -40,6 +41,7 @@ hold a conversation — so an unmatched phrasing is a conversation, never a dead
 - [Layout](#layout)
 - [Adding a tool](#adding-a-tool)
 - [Safety: what needs confirming](#safety-what-needs-confirming)
+- [Use it as an MCP server](#use-it-as-an-mcp-server)
 - [Switching provider](#switching-provider)
 - [Configuration](#configuration)
 - [Known limits](#known-limits)
@@ -115,6 +117,7 @@ Wilco/
 │   ├── web.py              web search, page reading, YouTube
 │   ├── shell_tool.py       PowerShell, split into free and confirmed
 │   └── gate.py             holds a dangerous action until you say yes
+├── mcp_server.py           the same tools over MCP stdio, for any MCP client
 ├── windows/                the machine half — apps, files, shell, speech, system
 └── prompts/agent.txt       personality and tool guidance, edit without touching code
 ```
@@ -166,6 +169,39 @@ could smuggle a second command in. Anything else is held.
 The split exists because the input is speech — Whisper mishears, and the model composes the
 command from what it heard, so a misheard sentence must never be able to reconfigure the
 machine on its own.
+
+## Use it as an MCP server
+
+The same 39 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+so Claude Desktop, Claude Code or any MCP client can drive this machine.
+
+```jsonc
+// claude_desktop_config.json
+{
+  "mcpServers": {
+    "wilco": { "command": "python", "args": ["C:/path/to/Wilco/mcp_server.py"] }
+  }
+}
+```
+
+[mcp_server.py](mcp_server.py) is a second front door, not new plumbing. `main.py` still calls
+`mcp_tool.call()` in-process — putting JSON-RPC between two functions in one process would
+only cost latency, and voice is latency-sensitive. Both read the one `REGISTRY`, so a tool
+written for the voice loop appears over MCP with no extra work:
+
+```
+main.py ──────┐
+              ├──> mcp_tool.REGISTRY ──> 39 tools
+mcp_server.py ┘
+```
+
+The confirmation gate is keyed per client session, so one client can never confirm an action
+another one parked. Tools run on a worker thread, since pressing 50 media keys would otherwise
+block the event loop.
+
+**This is real control of a real desktop.** An MCP client that connects gets the same reach
+the voice loop has — files, PowerShell, windows, power state. The gate still holds the
+dangerous half, but everything else runs on request.
 
 ## Switching provider
 

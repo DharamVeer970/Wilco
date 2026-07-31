@@ -7,3 +7,4 @@ rapidfuzz>=3.14.5
 python-dotenv>=1.1.1
 pywin32>=311
 comtypes>=1.4.11
+mcp>=1.23.1  # only mcp_server.py needs this; the voice loop runs without it
