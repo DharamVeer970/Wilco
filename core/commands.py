@@ -13,6 +13,7 @@ from core import agent, context, online
 import windows.shell as shell
 import windows.system as system
 from core.brain import ai
+from mcp_tool import gate
 from windows.speech import speak
 
 SITES = {
@@ -323,12 +324,18 @@ def _answer_pending(what, query):
     global _pending
     if what[0] == "confirm":
         _, phrase, action = what
-        if re.fullmatch(r"(?:yes|yeah|yep|yup|sure|ok|okay|do it|go ahead|confirm)", query):
+        answer = gate._reply_kind(query)
+        if answer == "yes":
             action()
             speak(f"Okay, {phrase}.")
-        else:
+            return True
+        if answer == "no":
             speak("Okay, cancelled.")
-        return True
+            return True
+        # Neither. Don't cancel — a misheard word is not a refusal. Returning False lets the
+        # rest of dispatch try to read it as a fresh command; if nothing does, the question
+        # is put back and asked again at the end of _dispatch.
+        return False
 
     if what[0] == "app":
         found = what[1]
@@ -760,7 +767,10 @@ def _dispatch(query, allow_chat=True):
 
     if unanswered is not None:
         _pending = unanswered  # nothing else understood it, so keep the question alive
-        speak("Sorry, which one did you mean?")
+        if unanswered[0] == "confirm":
+            speak(f"Sorry, I didn't catch that. Should I {unanswered[1]}? Say yes or no.")
+        else:
+            speak("Sorry, which one did you mean?")
         return "command"
 
     if not allow_chat:
