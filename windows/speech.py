@@ -1,10 +1,10 @@
 import os
 
 import speech_recognition as sr
-import win32com.client
 from huggingface_hub import InferenceClient
 
 from config import hf_token, stt_model
+from windows.voice import speak
 
 # How long you can go quiet mid-sentence before Wilco decides you've finished. Thinking
 # pauses are normal in speech, and cutting at 0.8s chopped sentences in half and acted on the
@@ -22,18 +22,11 @@ r.non_speaking_duration = min(0.5, PAUSE_SECONDS / 2)
 r.phrase_threshold = MIN_PHRASE_SECONDS
 r.dynamic_energy_threshold = True
 
-# SAPI, not pyttsx3: a pyttsx3 engine goes silent after its first runAndWait()
-voice = win32com.client.Dispatch("SAPI.SpVoice")
 hf = InferenceClient(
     api_key=hf_token, provider="hf-inference",
     headers={"Content-Type": "audio/wav"}, timeout=30,  # else a cold model hangs the loop
 )
 _calibrated = False
-
-
-def speak(text):
-    print(f"Wilco: {text}")
-    voice.Speak(text)
 
 
 def calibrate(source, seconds=1.0):

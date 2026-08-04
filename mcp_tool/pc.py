@@ -7,9 +7,13 @@ see what happened and carry the conversation instead of guessing.
 Imports windows/* and core.context only. It must never import core.commands, or the
 one-way import chain turns into a cycle.
 """
+import datetime
 import os
+import re
+import shutil
 
 import windows.apps as apps
+import windows.browser as browsers
 import windows.files as files
 import windows.shell as shell
 import windows.system as system
@@ -40,6 +44,43 @@ def open_app(name):
         return f"Opened {display}, now focused ({title}). Typing will go here."
     return (f"Opened {display}, but its window hasn't appeared yet. Call focus_window "
             f"before typing anything into it.")
+
+
+def open_browser_window(private=False, url="", browser=""):
+    """Open a NEW browser window — private or ordinary.
+
+    THIS is the tool for "incognito", "InPrivate", "private window", "private browsing",
+    "secret tab". Never try to do that through the browser's menu: the menu items are not in
+    list_controls until the menu is open, and a keystroke can land in the wrong window. This
+    starts the browser with its own switch instead, so it works whatever has focus.
+
+    private: true for incognito/InPrivate. url: optional page to open in the new window.
+    browser: edge, chrome, firefox, brave, opera, vivaldi — empty means the user's default.
+    The title of the window that actually appeared is read back, so what this reports is what
+    really happened rather than an assumption."""
+    private = private in (True, "true", "True", 1, "1", "yes")
+    try:
+        name, title, looked_private, reused = browsers.open_window(browser, private, url)
+    except LookupError:
+        return (f"I don't know a browser called {browser}. Installed here: "
+                f"{', '.join(browsers.installed()) or 'none I can find'}.")
+    except FileNotFoundError as e:
+        return (f"{e} isn't installed on this machine. What is: "
+                f"{', '.join(browsers.installed()) or 'no browser I can find'}.")
+    except OSError as e:
+        return f"Couldn't start {browser or 'the browser'}: {e.strerror or e}."
+    kind = "private" if private else "new"
+    if reused:
+        system.focus_window(title[:40])
+        return (f"{name} already had a private window open, so this went in as a new tab "
+                f"there rather than a second window, and that window is now in front: {title}.")
+    if not title:
+        return (f"Ran {name} with its {kind}-window switch, but no new window appeared within "
+                f"a few seconds. Call list_open_windows to see whether it turned up late.")
+    if private and not looked_private:
+        return (f"Opened a {name} window ({title}), but it does not call itself private in "
+                f"the title, so do not promise the user it is. Say what you see.")
+    return f"Opened a {kind} {name} window: {title}."
 
 
 def close_app(name=""):
@@ -124,10 +165,31 @@ def type_text(text, press_enter=False):
 
 
 def press_key(name, times=1):
-    """Tap a key: enter, tab, escape, space, backspace, delete, up, down, left, right,
-    home, end, pageup, pagedown, f5. Goes to the focused window."""
+    """Press a key or a keyboard shortcut in the window that has focus.
+
+    Write a shortcut as one string with pluses — "ctrl+a", "ctrl+shift+n", "alt+f4".
+    NEVER send the modifier as its own call: pressing "ctrl" and then "a" separately does
+    nothing at all, because a shortcut only registers while the modifier is held.
+
+    Single keys: enter, tab, escape, space, backspace, delete, insert, up, down, left, right,
+    home, end, pageup, pagedown, f1 to f12, any letter, any digit.
+
+    The ones worth knowing:
+      ctrl+a select all      ctrl+c copy         ctrl+v paste      ctrl+x cut
+      ctrl+z undo            ctrl+y redo         ctrl+s save       ctrl+p print
+      ctrl+f find            ctrl+n new window   ctrl+w close tab  ctrl+t new tab
+      alt+tab switch app     alt+f4 close window win+d show desktop
+
+    In a browser, reach for these before hunting through menus — the menu items often are
+    not in list_controls until the menu is opened, but the shortcut always works:
+      ctrl+shift+n InPrivate / incognito window (Edge, Chrome)   ctrl+shift+p (Firefox)
+      ctrl+shift+t reopen the tab you just closed   ctrl+l address bar   f11 full screen
+      alt+f opens the browser's own menu, if you do need to see inside it
+
+    To wipe a text box or document: press ctrl+a, then delete."""
     if not system.press_key(name, int(times)):
-        return f"I don't know a key called {name}."
+        return (f"'{name}' isn't a key I can press. Write shortcuts as one string like "
+                f"'ctrl+a'. A modifier on its own does nothing.")
     return f"Pressed {name}" + (f" {times} times." if int(times) > 1 else ".")
 
 
@@ -205,6 +267,86 @@ def list_folder_contents(folder_name, kind="any"):
         return f"No {kind} files in {path}."
     return (f"{len(items)} files in {path}: " +
             "; ".join(f"{n} ({k})" for k, n in items[:30]))
+
+
+TEXT_LIMIT = 6000
+
+
+def _resolve(path):
+    """A spoken path into a real one. Accepts C:/x, C:\\x, /c/x and ~/x."""
+    path = os.path.expanduser(path.strip().strip('"'))
+    if re.fullmatch(r"/[a-zA-Z]/.*", path):          # git-bash style /c/Users/...
+        path = path[1] + ":" + path[2:]
+    return os.path.abspath(path)
+
+
+def read_file(path, lines=200):
+    """Read a text file and return its contents — notes, code, config, logs, csv.
+    path: a full path, or ~/Documents/notes.txt. lines: how many lines to read back.
+    Use run_bash with grep when you need to search inside many files instead of one."""
+    full = _resolve(path)
+    if not os.path.isfile(full):
+        return f"There's no file at {full}."
+    try:
+        with open(full, encoding="utf-8", errors="replace") as handle:
+            read = [next(handle, None) for _ in range(int(lines))]
+    except OSError as e:
+        return f"Couldn't read {full}: {e.strerror or e}"
+    text = "".join(part for part in read if part)
+    if not text.strip():
+        return f"{full} is empty."
+    return f"{full}:\n{text[:TEXT_LIMIT]}"
+
+
+def _backup(full):
+    """Keep the previous contents next to the file. Overwriting is not undoable otherwise."""
+    if os.path.isfile(full):
+        try:
+            shutil.copy2(full, full + ".bak")
+            return " The previous version is saved alongside it as a .bak file."
+        except OSError:
+            return " I couldn't make a backup copy, so the old contents will be lost."
+    return ""
+
+
+def _write(full, text):
+    os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
+    note = _backup(full)
+    with open(full, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return f"Saved {len(text)} characters to {full}.{note}"
+
+
+def write_file(path, text):
+    """Create a file, or replace everything in one. ALWAYS asks the user first — this call
+    writes nothing. Say the path and roughly what is going into it before they decide.
+    The old contents are kept as a .bak file, so an overwrite can be undone."""
+    full = _resolve(path)
+    what = "replace everything in" if os.path.isfile(full) else "create"
+    return _park(f"{what} {full} with {len(text)} characters of text",
+                 lambda: _write(full, text))
+
+
+def edit_file(path, find, replace):
+    """Change some text inside a file, leaving the rest alone — fix a typo, change a setting,
+    update a value. ALWAYS asks first, and tells you how many places would change, so a
+    find-and-replace can't quietly rewrite more than expected. The old version is kept as
+    a .bak file."""
+    full = _resolve(path)
+    if not os.path.isfile(full):
+        return f"There's no file at {full}."
+    try:
+        original = open(full, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        return f"Couldn't read {full}: {e.strerror or e}"
+    hits = original.count(find)
+    if not hits:
+        return f"{full} doesn't contain that text, so there's nothing to change."
+    preview = replace[:60] + ("..." if len(replace) > 60 else "")
+    return _park(
+        f"change {hits} place{'s' if hits > 1 else ''} in {os.path.basename(full)} "
+        f"from {find[:60]!r} to {preview!r}",
+        lambda: _write(full, original.replace(find, replace)))
 
 
 def delete_file(name, kind="any"):
@@ -316,6 +458,39 @@ def power_action(action):
     if action not in parked:
         return "action must be shutdown, restart or sleep."
     return _park(*parked[action])
+
+
+def take_screenshot(what="screen"):
+    """Capture the screen to an image file in the user's Pictures folder and report where it
+    went. what: 'screen' for everything including a second monitor, or 'window' for just the
+    window in front."""
+    from PIL import ImageGrab  # imported here so a missing Pillow can't stop Wilco starting
+
+    folder = os.path.join(system.folder("pictures") or os.path.expanduser("~"), "Screenshots")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"shot-{datetime.datetime.now():%Y-%m-%d-%H%M%S}.png")
+    if what.strip().lower().startswith("win"):
+        hwnd, title = system.foreground_window()
+        box = system.window_box(hwnd) if hwnd else None
+        image = ImageGrab.grab(bbox=box) if box else ImageGrab.grab(all_screens=True)
+        where = f" of {title}" if box else ""
+    else:
+        image = ImageGrab.grab(all_screens=True)
+        where = ""
+    image.save(path)
+    return f"Screenshot{where} saved as {os.path.basename(path)} in {folder}."
+
+
+def current_time(what="both"):
+    """The current time and date. what: 'time', 'date', or 'both'. Say it the way a person
+    would — 'about twenty past four' or 'Tuesday the third' — not as digits read out."""
+    now = datetime.datetime.now()
+    asked = what.strip().lower()
+    if asked == "time":
+        return f"It's {now:%I:%M %p}".replace(" 0", " ")
+    if asked == "date":
+        return f"Today is {now:%A, %d %B %Y}"
+    return f"It's {now:%I:%M %p} on {now:%A, %d %B %Y}".replace(" 0", " ")
 
 
 def lock_screen():

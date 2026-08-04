@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-39-6E56CF" alt="39 tools">
+  <img src="https://img.shields.io/badge/tools-64-6E56CF" alt="64 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -15,9 +15,10 @@
 ---
 
 Wilco listens on the mic, transcribes with Whisper, and either fires a local command instantly
-or hands the utterance to an agent that can call **39 tools** — apps, files, folders, volume,
+or hands the utterance to an agent that can call **64 tools** — apps, files, folders, volume,
 brightness, media, Windows settings, the controls inside any window, web search, YouTube, and
-PowerShell. Replies are spoken back through Windows SAPI.
+PowerShell. Replies are spoken back in a neural voice — thirteen voice packs, switchable by
+voice mid-conversation, at whatever pace you ask for.
 
 It is an agent, not a command parser: it reads what each tool returned, chains further calls
 if the job needs them, and keeps talking afterwards.
@@ -64,8 +65,9 @@ HUGGINGFACE_API_KEY=...
 provider is. Get one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens);
 a read token is enough.
 
-Web search needs no key. It reads DuckDuckGo's HTML endpoint, the same approach `online.py`
-already uses for YouTube.
+**Every outside source is keyless.** Search, Wikipedia, weather, news, dictionary, exchange
+rates and crypto prices all serve anonymous requests, so there is no signup, no key to rotate,
+and nothing to expire quietly months from now. Only the chat model and Whisper need keys.
 
 `PyAudio` is needed by `SpeechRecognition` for mic input; on Windows install a prebuilt wheel
 if pip tries to compile it.
@@ -77,6 +79,18 @@ if pip tries to compile it.
 | "open / launch `<app>`" | Opens any installed app, then focuses it |
 | "type `<text>`" | Types into the focused window |
 | "search for `<thing>`" | Web search, answer spoken back |
+| "tell me about `<topic>`" / "who invented `<X>`" | Wikipedia — searched, so a spoken question works |
+| "tell me more about its history" | The full article, or one named section |
+| "what does `<word>` mean" | Dictionary definition and an example |
+| "how's the weather" / "weather in London" | Current conditions and today's outlook |
+| "today's headlines" / "cricket news" | Top stories, read out |
+| "what's 100 dollars in rupees" | Today's exchange rate |
+| "what's bitcoin at" | Live price and the day's move |
+| "take a screenshot" | Saves to Pictures\Screenshots |
+| "what's the time" / "what's the date" | Spoken naturally |
+| "wake me at 7" / "remind me in 10 minutes to X" | Speaks aloud when it's due |
+| "email Rahul about X" | Reads it back, sends only on your yes |
+| "whatsapp mum saying X" | Same — confirmed before sending |
 | "google `<thing>`" | Opens a Google results page |
 | "play `<thing>` on youtube" | Searches and plays the top hit |
 | "play the next one" | Steps through the last search |
@@ -85,11 +99,18 @@ if pip tries to compile it.
 | "brightness to 40" | WMI, laptop panels only |
 | "open display settings and turn night light on" | Opens the page, then flips the actual switch |
 | "search inside settings for bluetooth" | Types into the app's own search box |
+| "open incognito" / "InPrivate window" | Launches the browser with its own private switch |
 | "close this tab" | Ctrl+W on the frontmost browser — the browser stays open |
 | "close the tab in chrome" | Focuses Chrome first, then closes one tab |
 | "close chrome" / "close the app" | Closes the whole app, and every window it owns |
 | "pause" / "next" / "stop" | Real media keys — works with Spotify, VLC, browsers |
 | "what's my ip" / "how much disk space" | Machine state, spoken |
+| "find every python file mentioning api_key" | grep across files, any type |
+| "what's taking up space in downloads" | find / du / sort through real files |
+| "what can you do" | Lists its own tools by area |
+| "are you working properly" | Parses every file, checks the gates, and really creates/edits a throwaway file to prove the tools work |
+| "read my notes file" | Reads any text file back |
+| "change the port to 9090 in config" | Says how many places, then waits for yes |
 | "shut down" / "restart" | Asks first, then does it |
 | "reset chat" / "start over" | Clears the conversation and the context |
 | "wilco quit" | Exits |
@@ -112,13 +133,17 @@ Wilco/
 │   └── online.py           YouTube search and playback
 ├── mcp_tool/               everything the agent can call
 │   ├── __init__.py         the registry — schemas derived from signatures
-│   ├── pc.py               Windows control
+│   ├── pc.py               Windows control, screenshots, time and date
 │   ├── ui.py               reading and operating controls inside a window
-│   ├── web.py              web search, page reading, YouTube
-│   ├── shell_tool.py       PowerShell, split into free and confirmed
+│   ├── web.py              search, Wikipedia, weather, news, dictionary, rates, YouTube
+│   ├── reminders.py        alarms that speak up on their own
+│   ├── message.py          email and WhatsApp, both confirmed first
+│   ├── shell_tool.py       PowerShell, Python and bash — free to read, confirmed to change
+│   ├── selftest.py         what Wilco can do, and whether it still works
+│   ├── voice.py            switching voice pack and talking speed
 │   └── gate.py             holds a dangerous action until you say yes
 ├── mcp_server.py           the same tools over MCP stdio, for any MCP client
-├── windows/                the machine half — apps, files, shell, speech, system
+├── windows/                the machine half — apps, files, shell, speech, browser, system
 └── prompts/agent.txt       personality and tool guidance, edit without touching code
 ```
 
@@ -157,9 +182,27 @@ yes out loud:
 - emptying the recycle bin
 - shutdown, restart, sleep
 - any PowerShell that writes, deletes, installs or reconfigures
+- sending an email or a WhatsApp — recipient and full text are read back first, because a
+  sent message is the one thing here that cannot be taken back
+- writing to or editing a file — it says how many places would change first, and keeps
+  the previous version as a `.bak`
+
+A reply is read three ways, not two. A clear yes runs it, a clear no cancels it, and anything
+else — a half-heard word, background noise, "thank you" — asks again rather than cancelling.
+Hindi counts too: *haan*, *ji*, *theek hai*, *kar do* are yes; *nahi*, *mat karo*, *rehne do*
+are no.
 
 Everything else just runs. Locking the screen, opening apps, volume, brightness, media,
-searching and typing are all immediate.
+screenshots, reminders, searching and typing are all immediate.
+
+## Contacts
+
+Email and WhatsApp accept a saved name or a raw address/number. Copy
+`contacts.example.json` to `contacts.json` (gitignored — it holds real addresses):
+
+```json
+{ "rahul": { "email": "rahul@example.com", "phone": "+91 98765 43210" } }
+```
 
 PowerShell is split by [mcp_tool/shell_tool.py](mcp_tool/shell_tool.py): a command runs freely
 only if it starts with something read-only (`Get-*`, `ipconfig`, `systeminfo`, `tasklist`,
@@ -172,7 +215,7 @@ machine on its own.
 
 ## Use it as an MCP server
 
-The same 39 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+The same 60 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
 so Claude Desktop, Claude Code or any MCP client can drive this machine.
 
 ```jsonc
@@ -191,7 +234,7 @@ written for the voice loop appears over MCP with no extra work:
 
 ```
 main.py ──────┐
-              ├──> mcp_tool.REGISTRY ──> 39 tools
+              ├──> mcp_tool.REGISTRY ──> 60 tools
 mcp_server.py ┘
 ```
 
@@ -233,6 +276,8 @@ was tried and returned a 400 on the same tool schema.
 | `HUGGINGFACE_API_KEY` | *required* | Whisper speech-to-text |
 | `COHERE_API_KEY` | *required for the default provider* | Chat + tool calling |
 | `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
+| `WILCO_VOICE` | `ava` | Which voice pack it starts in |
+| `WILCO_SPEED` | `25` | Talking pace, as a percentage on top of that voice's own |
 | `WILCO_ROOT` | *(every drive)* | `;`-separated folders to limit the file scan to |
 
 `WILCO_PAUSE` is how long you may go quiet mid-sentence. Every microphone and room differs,
@@ -242,12 +287,47 @@ so tune it: raise it if you're still being cut off, lower it if replies feel slu
 WILCO_PAUSE=3.5
 ```
 
+## Voices
+
+| | |
+|---|---|
+| American | `ava` `andrew` `emma` `brian` |
+| British | `sonia` `ryan` |
+| Indian English | `neerja` `prabhat` |
+| Australian | `natasha` |
+| Hindi | `madhur` `swara` |
+| Built-in Windows | `david` `zira` — flat, but offline and instant |
+
+Ask for one out loud and it answers in it: *"switch to ryan"*, *"use an Indian voice"*,
+*"what voices have you got"*.
+
+Speed is yours to drive, from -50 to +100 percent of the voice's own pace:
+
+| Say | What it does |
+|---|---|
+| "talk faster" / "speak slower" | ±15 from where it is |
+| "speed up" / "slow down" | the same, shorter |
+| "talk 20 percent faster" | ±20 from where it is |
+| "set speech speed to 40" | straight to +40 |
+
+Those hit the instant regex path — no LLM round trip, so the change lands as fast as you can
+say it. Both the voice and the speed are written to `.wilco_voice.json` and survive a restart;
+`WILCO_VOICE` and `WILCO_SPEED` only set where it starts before that file exists.
+
+A reply is synthesised a sentence or two at a time and played while the rest is still being
+made, so Wilco starts talking before the paragraph is finished. Short lines it repeats a lot
+are cached on disk and come back instantly. If the network is down, or `edge-tts` isn't
+installed, it falls back to the built-in Windows voice mid-sentence rather than going quiet.
+
 ## Known limits
 
 - No wake word — it acts on every utterance.
 - `speak()` blocks, so it is deaf while talking.
 - The first file or folder command scans the drives, which takes a few seconds once per run.
 - The app list is read once per session, so restart to pick up a new install.
-- Windows-only: SAPI for speech, `win32com` and `ctypes` throughout.
+- Windows-only: `win32com` and `ctypes` throughout, and mp3 playback goes through MCI.
+- Neural speech is synthesised over the network, so a line it hasn't said before starts after
+  roughly a second and a half. Repeats are cached and instant; `david` and `zira` are always
+  instant but flat.
 - Whisper runs over the network, so transcription costs a round trip.
 - `set_volume` taps volume-down 50 times then back up, since each key press moves 2%.

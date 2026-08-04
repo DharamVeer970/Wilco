@@ -6,21 +6,39 @@ import time
 import uuid
 from ctypes import wintypes
 
+import win32api
 import win32com.client
 import win32con
 import win32gui
+import win32process
 
 VK = {"mute": 0xAD, "down": 0xAE, "up": 0xAF,
       "next": 0xB0, "previous": 0xB1, "stop": 0xB2, "play_pause": 0xB3}
 KEYUP = 0x0002
 VK_LWIN, VK_S, VK_CTRL, VK_ALT, VK_W, VK_F4 = 0x5B, 0x53, 0x11, 0x12, 0x57, 0x73
 NO_WINDOW = subprocess.CREATE_NO_WINDOW  # else every shell-out flashes a black console
+PROCESS_QUERY_LIMITED = 0x1000
 
 # named keys the agent can press by voice — separate from VK, whose up/down are volume
 KEYS = {"enter": 0x0D, "return": 0x0D, "tab": 0x09, "escape": 0x1B, "esc": 0x1B,
-        "space": 0x20, "backspace": 0x08, "delete": 0x2E, "up": 0x26, "down": 0x28,
-        "left": 0x25, "right": 0x27, "home": 0x24, "end": 0x23, "pageup": 0x21,
-        "pagedown": 0x22, "f5": 0x74, "refresh": 0x74}
+        "space": 0x20, "spacebar": 0x20, "backspace": 0x08, "back": 0x08,
+        "delete": 0x2E, "del": 0x2E, "insert": 0x2D, "ins": 0x2D,
+        "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+        "home": 0x24, "end": 0x23, "pageup": 0x21, "pgup": 0x21,
+        "pagedown": 0x22, "pgdn": 0x22, "capslock": 0x14, "printscreen": 0x2C,
+        "menu": 0x5D, "apps": 0x5D}
+KEYS.update({f"f{n}": 0x6F + n for n in range(1, 13)})          # F1 = 0x70 ... F12 = 0x7B
+KEYS.update({c: ord(c.upper()) for c in "abcdefghijklmnopqrstuvwxyz"})  # letters: 'A' = 0x41
+KEYS.update({d: ord(d) for d in "0123456789"})                  # digits: '0' = 0x30
+KEYS["refresh"] = KEYS["f5"]
+
+# Held down while another key is tapped. Their absence is why "clear this text" was
+# impossible: ctrl+a can only be done by holding ctrl, never by pressing ctrl then a as two
+# separate keystrokes, which is exactly what was attempted and could never have worked.
+MODIFIERS = {"ctrl": VK_CTRL, "control": VK_CTRL, "ctl": VK_CTRL,
+             "alt": VK_ALT, "shift": 0x10,
+             "win": VK_LWIN, "windows": VK_LWIN, "super": VK_LWIN, "meta": VK_LWIN}
+_KEY_SPLIT = re.compile(r"[\s+\-]+")
 
 # Windows known-folder GUIDs — resolved at runtime so redirected paths still work
 FOLDER_IDS = {
@@ -96,23 +114,90 @@ def foreground_window():
     return hwnd, win32gui.GetWindowText(hwnd)
 
 
-def _browser_window():
-    """The frontmost browser window, or None."""
-    hwnd, title = foreground_window()
-    if hwnd and any(b in title.lower() for b in BROWSERS):
-        return title
+def _force_foreground(hwnd):
+    """Raise a window and confirm it actually came forward.
+
+    Windows refuses SetForegroundWindow from a process that doesn't already own the
+    foreground — which Wilco never does, since the user is looking at their own work. The
+    documented way through is to attach to the input queue of whichever thread currently
+    holds the foreground, which makes the call legal for as long as the attachment lasts.
+    A synthetic ALT tap on top of that satisfies the "there was recent user input" rule the
+    lock also checks. Neither is a hack around a security boundary; both are the sanctioned
+    route, and either alone fails on some Windows builds.
+    """
+    if not hwnd:
+        return False
+    try:
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        current = win32gui.GetForegroundWindow()
+        if current == hwnd:
+            return True  # already there, so don't touch focus at all
+        ours = win32api.GetCurrentThreadId()
+        theirs = win32process.GetWindowThreadProcessId(current)[0] if current else 0
+        attached = False
+        try:
+            if theirs and theirs != ours:
+                win32process.AttachThreadInput(theirs, ours, True)
+                attached = True
+            _tap(VK_ALT)
+            win32gui.SetForegroundWindow(hwnd)
+            win32gui.BringWindowToTop(hwnd)
+        finally:
+            if attached:
+                try:
+                    win32process.AttachThreadInput(theirs, ours, False)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # report what really happened rather than assuming the call did what it said
+    for _ in range(6):
+        if win32gui.GetForegroundWindow() == hwnd:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def window_box(hwnd):
+    """(left, top, right, bottom) of a window, or None if it has no usable rectangle."""
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except Exception:
+        return None
+    return (left, top, right, bottom) if right > left and bottom > top else None
+
+
+# Ctrl+W closes a tab in far more than browsers. VS Code, Explorer, Terminal and Notepad all
+# have tabs, and treating only browsers as tabbed meant "close this tab" said in VS Code went
+# hunting for a browser and shut an unrelated tab in it.
+TABBED = BROWSERS + ("visual studio code", "explorer", "terminal", "notepad",
+                     "sublime", "notepad++", "atom", "obsidian")
+
+
+def _tabbed_window():
+    """A window that plausibly has tabs, when the user isn't looking at one."""
     for _, other in windows_matching(""):
-        if any(b in other.lower() for b in BROWSERS):
+        if any(app in other.lower() for app in TABBED):
             return other
     return None
 
 
 def _target_for_tab(named):
-    """Which window a tab-close should hit. None when there's nothing sensible."""
+    """Which window a tab-close should hit. None when there's nothing sensible.
+
+    "This tab" means the one in front, whatever app that is — so when the user is already
+    looking at it nothing has to be focused at all. That matters: Windows blocks a background
+    process from stealing focus, so the less focus is moved the more reliably this works.
+    """
     if named:
         return focus_window(named, wait=1.0)
-    browser = _browser_window()
-    return focus_window(browser, wait=1.0) if browser else None
+    hwnd, title = foreground_window()
+    if hwnd:
+        return title
+    # our own console is in front, so the user is looking at Wilco, not at their work
+    other = _tabbed_window()
+    return focus_window(other, wait=1.0) if other else None
 
 
 def close_tab(target=""):
@@ -210,16 +295,60 @@ def windows_search(query):
 
 
 def press_key(name, times=1):
-    """Tap a named key into whatever window has focus. False if the name isn't known."""
-    vk = KEYS.get(name.lower().strip())
-    if vk is None:
+    """Tap a key or a combination into the focused window. False if the name isn't known.
+
+    Accepts "enter", "a", "f2", and combinations written any of the usual ways —
+    "ctrl+a", "ctrl a", "ctrl+shift+n", "alt+f4". Modifiers are held down while the final
+    key is tapped, which is the only way a shortcut actually registers.
+    """
+    parts = [p for p in _KEY_SPLIT.split(name.lower().strip()) if p]
+    if not parts:
         return False
-    _tap(vk, times)
+    *held, final = parts
+    if final not in KEYS or any(m not in MODIFIERS for m in held):
+        return False
+    codes = [MODIFIERS[m] for m in held]
+    for _ in range(max(1, int(times))):
+        for code in codes:
+            _user32.keybd_event(code, 0, 0, 0)
+        _tap(KEYS[final])
+        for code in reversed(codes):  # release in reverse, as a real hand would
+            _user32.keybd_event(code, 0, KEYUP, 0)
     return True
 
 
+def window_exe(hwnd):
+    """The lowercased exe name behind a window — 'msedge.exe'. Empty when it can't be read.
+
+    Which process owns a window is the only dependable way to tell one browser's windows from
+    another's. Matching on the pid that was launched does not work for Chromium browsers: they
+    hand the request to an already-running process and the launched one exits immediately, so
+    by the time the window appears that pid is gone.
+    """
+    pid = wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED, False, pid)
+    if not handle:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(520)
+        size = wintypes.DWORD(len(buffer))
+        if ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                handle, 0, buffer, ctypes.byref(size)):
+            return os.path.basename(buffer.value).lower()
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+    return ""
+
+
 def windows_matching(title_part):
-    """[(hwnd, title)] of visible windows whose title contains the text, shortest title first."""
+    """[(hwnd, title)] of visible windows whose title contains the text, front-most first.
+
+    EnumWindows hands back windows in z-order, so the one the user was last looking at comes
+    first. That order used to be thrown away by sorting on title length, which is why asking
+    for "Notepad" with several open picked whichever happened to have the shortest title
+    rather than the one just being used.
+    """
     found = []
 
     def collect(hwnd, _):
@@ -229,7 +358,7 @@ def windows_matching(title_part):
                 found.append((hwnd, title))
 
     win32gui.EnumWindows(collect, None)
-    return sorted(found, key=lambda w: len(w[1]))
+    return found
 
 
 def focus_window(title_part, wait=3.0):
@@ -246,14 +375,7 @@ def focus_window(title_part, wait=3.0):
     if not found:
         return None
     hwnd, title = found[0]
-    try:
-        # a minimised window can't take focus, so restore it before raising it
-        if win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        return None  # Windows refuses focus steals from background processes
-    return title
+    return title if _force_foreground(hwnd) else None
 
 
 # spoken name -> ms-settings: page. "" is the Settings home page.

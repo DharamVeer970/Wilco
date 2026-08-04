@@ -10,9 +10,9 @@ turn. Tools never speak — core/agent.py does that once, at the end.
 """
 import inspect
 
-from mcp_tool import gate, pc, shell_tool, ui, web
+from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web
 
-MODULES = (pc, ui, web, shell_tool, gate)
+MODULES = (pc, ui, web, reminders, message, shell_tool, selftest, voice, gate)
 JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 

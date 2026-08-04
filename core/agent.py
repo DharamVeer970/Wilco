@@ -7,10 +7,12 @@ and either calls more or talks. Acting and chatting are the same turn, which is 
 it hold a thread.
 """
 import json
+import re
+import time
 
 import mcp_tool
 from config import chat_model
-from core.brain import PROMPTS, llm
+from core.brain import PROMPTS, complete, llm
 from windows.speech import speak
 
 SYSTEM_PROMPT = (PROMPTS / "agent.txt").read_text(encoding="utf-8").strip()
@@ -20,11 +22,106 @@ MAX_MESSAGES = 40  # rolling window, trimmed on whole turns
 
 history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
+# Everything below is spoken aloud, so anything that reads like machinery has to go. The model
+# sometimes writes its tool calls out as ordinary text, or narrates what it is about to do;
+# read out loud that is noise, and the user asked for the answer, not the working.
+_FENCE = re.compile(r"```.*?```", re.S)
+_BRACKETED = re.compile(r"\[[^\[\]]{0,300}\]")          # [Checking system settings...]
+_MARKDOWN = re.compile(r"\*{1,3}|#{1,6}\s*|`+")
+_MACHINERY = ("tool_call_id", "tool_name", "tool_calls", '"parameters"', '"arguments"')
+_META_LINE = re.compile(r"^\s*(?:note|disclaimer|reasoning|thought|action)\s*:", re.I)
+_PUNCT_ONLY = re.compile(r"^[\s\[\]{}(),:\"']*$")
+
+
+def _speakable(text):
+    """Strip tool-call JSON, stage directions and markdown out of what gets spoken."""
+    if not text:
+        return ""
+    kept = []
+    for line in _MARKDOWN.sub("", _FENCE.sub("", text)).splitlines():
+        if any(word in line for word in _MACHINERY) or _META_LINE.match(line):
+            continue
+        line = _BRACKETED.sub("", line)
+        if _PUNCT_ONLY.match(line):
+            continue
+        kept.append(line.strip())
+    return "\n".join(kept).strip()
+
+
+# Devanagari and friends: the Windows SAPI voice has no idea what to do with these and simply
+# says nothing, which looks like a crash rather than a language problem. The prompt asks for
+# Hinglish; this catches the times it slips and rewrites rather than going silent.
+_NON_LATIN = re.compile(r"[ऀ-ॿঀ-৿਀-੿஀-௿ఀ-౿]")
+
+
+def _romanise(text):
+    """Rewrite non-Latin script into Latin letters so the voice can actually say it."""
+    if not text or not _NON_LATIN.search(text):
+        return text
+    print("[romanising — the voice can't pronounce that script]")
+    try:
+        rewritten = complete([
+            {"role": "system",
+             "content": "Rewrite the user's text in Latin letters only, keeping the same "
+                        "language and meaning — Hindi becomes Hinglish the way people type "
+                        "it in chat. Keep English words as English. Reply with the rewritten "
+                        "text and nothing else."},
+            {"role": "user", "content": text}])
+        return rewritten.strip() if rewritten and rewritten.strip() else text
+    except Exception as e:
+        print("Romanise failed:", e)
+        return text
+
+
+EMPTY_TRIES = 3
+
+
+def _ask():
+    """One completion, retried when the provider generates nothing at all.
+
+    Cohere intermittently answers a perfectly valid request with 422
+    NO_TOOL_CALL_OR_RESPONSE_GENERATED — no tool call, no text, nothing. It is a flake on
+    their side, not a fault in the request: the identical message shape succeeded twelve times
+    out of twelve when tested. Nothing here can prevent it, so it is retried with a little
+    backoff rather than costing the user their turn. Any other error is real and raised at once.
+    """
+    for attempt in range(1, EMPTY_TRIES + 1):
+        try:
+            return llm.chat.completions.create(
+                model=chat_model, messages=history, tools=mcp_tool.TOOLS
+            ).choices[0].message
+        except Exception as e:
+            if attempt == EMPTY_TRIES or "NO_TOOL_CALL_OR_RESPONSE" not in str(e):
+                raise
+            print(f"  (empty generation — retry {attempt} of {EMPTY_TRIES - 1})")
+            time.sleep(attempt)
+
 
 def _as_dict(message):
     """Only the fields the API accepts back — providers reject their own extra keys."""
     data = message.model_dump(exclude_none=True)
     return {k: v for k, v in data.items() if k in ("role", "content", "tool_calls")}
+
+
+def _repair():
+    """Drop a trailing tool_calls message that never got its results.
+
+    One of these is fatal and permanent: every later request is rejected with "tool_call_ids
+    did not have response messages", so the assistant is dead until restart. Cheap to check,
+    so it is checked before every turn rather than trusted not to happen.
+    """
+    while len(history) > 1:
+        answered = {m.get("tool_call_id") for m in history if m.get("role") == "tool"}
+        wanted = {c["id"] for m in history if m.get("role") == "assistant"
+                  for c in (m.get("tool_calls") or [])}
+        orphans = wanted - answered
+        if not orphans:
+            return
+        cut = next(i for i, m in enumerate(history)
+                   if m.get("role") == "assistant"
+                   and any(c["id"] in orphans for c in (m.get("tool_calls") or [])))
+        print(f"[history repair] dropping {len(history) - cut} messages with unanswered tool calls")
+        del history[cut:]
 
 
 def _trim():
@@ -48,29 +145,33 @@ def respond(text, already_done=()):
     if already_done:
         text = (f"{text}\n\n(Already carried out, do not repeat: {'; '.join(already_done)}. "
                 f"Continue with the rest of the request.)")
+    _repair()
+    checkpoint = len(history)  # everything from here is this turn, and unwinds together
     history.append({"role": "user", "content": text})
 
+    acted = False
     for _ in range(MAX_STEPS):
         try:
-            message = llm.chat.completions.create(
-                model=chat_model, messages=history, tools=mcp_tool.TOOLS
-            ).choices[0].message
+            message = _ask()
         except Exception as e:
             print("Agent error:", e)
-            del history[-1:]
-            speak("I couldn't reach my brain just then. Say that again?")
+            # Roll the whole turn back. Deleting just the last message used to strip a tool
+            # RESULT when the failure landed mid-loop, stranding the tool call that produced
+            # it — and a stranded tool call breaks every request that follows it, for good.
+            del history[checkpoint:]
+            # If tools already ran, the work really happened — saying "I couldn't reach my
+            # brain" would be a lie about a machine the user is looking at.
+            speak("I did that, but couldn't put the reply together. Ask again for the details?"
+                  if acted else "I couldn't reach my brain just then. Say that again?")
             return
 
         history.append(_as_dict(message))
 
         if not message.tool_calls:
-            speak(message.content or "Done.")
+            spoken = _romanise(_speakable(message.content))
+            speak(spoken or "Done.")
             _trim()
             return
-
-        # a preamble alongside tool calls keeps the silence filled while tools run
-        if message.content and message.content.strip():
-            speak(message.content.strip())
 
         for call in message.tool_calls:
             try:
@@ -80,6 +181,7 @@ def respond(text, already_done=()):
             print(f"  -> {call.function.name}({arguments})")
             result = mcp_tool.call(call.function.name, arguments)
             print(f"     {result[:160]}")
+            acted = True
             history.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
     speak("That turned into more steps than I expected, so I've stopped. What were you after?")

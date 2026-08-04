@@ -6,8 +6,8 @@ from windows.speech import speak, takeCommand
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 if __name__ == "__main__":
-    print("Welcome to Wilco")
-    speak("Welcome to Wilco")
+    print("Welcome to Wilco AI")
+    speak("Welcome to Wilco AI")
 
     while True:
         query = takeCommand()

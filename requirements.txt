@@ -1,10 +1,11 @@
 openai>=2.9.0
 huggingface-hub>=0.35.3
 SpeechRecognition>=3.14.3
+edge-tts>=7.2.8  
 PyAudio>=0.2.14
 requests>=2.32.5
 rapidfuzz>=3.14.5
 python-dotenv>=1.1.1
 pywin32>=311
 comtypes>=1.4.11
-mcp>=1.23.1  # only mcp_server.py needs this; the voice loop runs without it
+mcp>=1.23.1  

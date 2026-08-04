@@ -14,6 +14,7 @@ import windows.shell as shell
 import windows.system as system
 from core.brain import ai
 from mcp_tool import gate
+from windows import voice
 from windows.speech import speak
 
 SITES = {
@@ -40,6 +41,14 @@ LIST_LIMIT = 40
 ASK_WHAT_NEXT = False  # the agent carries the conversation now, so the stock prompt just nags
 DOWN = re.compile(r"\b(?:down|low|lower|decrease|reduce|less|quieter|softer|dim|dimmer|darker)\b")
 BRIGHT = re.compile(r"\b(?:brightness|dim|dimmer|darker|brighten|brighter)\b")
+# how fast the words come out, which is not how loud — "louder" belongs to the volume path
+TALK = re.compile(
+    r"\b(?:talk|talking|speak|speaking|speech|say|saying|voice|read|reading)\b[\w\s']{0,20}?"
+    r"\b(?:speed|pace|rate|fast|faster|quick|quicker|slow|slower|slowly)\b"
+    r"|\b(?:speed\s+up|slow\s+down)\b")
+SLOWER = re.compile(r"\b(?:slow|slower|slowly|down|less)\b")
+RELATIVE = re.compile(r"\b(?:faster|slower|quicker|slowly|more|less|up|down|bit)\b")
+SPEED_STEP = 15
 # each pattern is wrapped before THIS_PC is appended, or the suffix would bind to
 # the last alternative only and "shut down the laptop" would never match
 POWER = [
@@ -428,6 +437,16 @@ def do(action, target):
             return False
         speak(f"Volume set to {system.set_volume(number.group(0))} percent.")
         return True
+    if action == "speech_speed":
+        now = voice.current()[3]
+        number = re.search(r"-?\d{1,3}", target)
+        step = int(number.group(0)) if number else SPEED_STEP
+        if number and not RELATIVE.search(target):
+            level = step
+        else:
+            level = now - step if SLOWER.search(target) else now + step
+        speak(f"Talking at {voice.set_speed(level)} percent now.")
+        return True
     if action == "set_brightness":
         number = re.search(r"\d{1,3}", target)
         current = system.get_brightness()
@@ -482,11 +501,17 @@ def do(action, target):
 
 # "can you please just open notepad for me" -> "open notepad": every fullmatch below
 # only ever saw the polite wrapper, so the whole command fell through to chat
+# People don't start sentences with the verb. "Now can you open Spotify" used to match nothing
+# at all, because the politeness stripper insisted the sentence BEGIN with "can you" — one
+# stray "now" and the whole command fell through as if it had never been understood. These are
+# allowed to repeat and to appear on either side of the "can you", in any order.
+FILLER = (r"(?:hey|hi|hello|ok|okay|so|now|well|um+|uh+|erm|like|actually|alright|right|"
+          r"listen|please|just|kindly|quickly|maybe|then|also|and)")
 POLITE = re.compile(
-    r"^(?:hey\s+|ok(?:ay)?\s+)?(?:" + NAME + r"[\s,]*)?"
+    r"^(?:" + FILLER + r"[\s,]+)*(?:" + NAME + r"[\s,]*)?(?:" + FILLER + r"[\s,]+)*"
     r"(?:(?:can|could|would|will)\s+(?:you|u)\s+)?"
     r"(?:(?:i\s+(?:want|need)\s+(?:you\s+)?to|i'?d\s+like\s+(?:you\s+)?to)\s+)?"
-    r"(?:please\s+|just\s+|kindly\s+)*")
+    r"(?:" + FILLER + r"[\s,]+)*")
 TRAILING = re.compile(r"(?:[\s,]+(?:please|for\s+me|mate|buddy|bro|now|" + NAME + r"|thanks?))+$")
 
 
@@ -501,10 +526,32 @@ VERBS = ("open", "show", "play", "search", "google", "find", "type", "write", "s
          "mute", "volume", "brightness", "launch", "start")
 
 
+FAST_WORDS = 9
+QUESTION = re.compile(
+    r"^(?:what|why|how|when|where|who|which|whose|whom|whats|what's|"
+    r"is|are|was|were|do|does|did|should|shall|may|might|"
+    r"tell|explain|define|describe|compare|suggest|recommend|think)\b")
+
+
+def _for_the_agent(query):
+    """True when the pattern table should not get first refusal at this sentence.
+
+    The fast path matches keywords, not meaning. "What is the volume of a sphere" contains the
+    word volume, so it turned the volume up; "why is screen brightness bad for eyes" changed
+    the brightness. Questions and long multi-part sentences are precisely where keyword
+    matching guesses wrong, and precisely where a second of real thinking costs nothing.
+
+    Short imperatives — "volume up", "open notepad", "pause" — stay on the instant path.
+    """
+    bare = _bare(query)
+    return bool(QUESTION.match(bare)) or len(bare.split()) > FAST_WORDS
+
+
 def _split_compound(query):
     """Split only when each later part really starts another command."""
     parts = [p.strip(STRIP) for p in SPLIT_RE.split(query) if p.strip(STRIP)]
-    if len(parts) > 1 and all(p.startswith(VERBS) for p in parts[1:]):
+    # test the bare part: "and then just play music" starts with filler, not with a verb
+    if len(parts) > 1 and all(_bare(p).startswith(VERBS) for p in parts[1:]):
         return parts
     return [query]
 
@@ -512,6 +559,14 @@ def _split_compound(query):
 def handle(query):
     """Run one command. Return False to quit, True to keep listening."""
     query = query.strip(STRIP)
+
+    # Anything that isn't a short, plain order goes straight to the agent. It reads the whole
+    # sentence and has every tool, so it can act OR answer — where the pattern table can only
+    # spot a keyword and hope. A menu waiting for an answer takes priority over this.
+    if _pending is None and _for_the_agent(query):
+        agent.respond(query)
+        return True
+
     parts = _split_compound(query)
 
     if len(parts) == 1:
@@ -698,6 +753,9 @@ def _dispatch(query, allow_chat=True):
         else:
             do("volume_down" if DOWN.search(query) else "volume_up", "")
         return "command"
+    if TALK.search(query):
+        do("speech_speed", query)
+        return "command"
     if BRIGHT.search(query):
         do("set_brightness", query)
         return "command"
@@ -765,8 +823,11 @@ def _dispatch(query, allow_chat=True):
         if open_app(name) or open_any_file(name):
             return "command"
 
-    if unanswered is not None:
-        _pending = unanswered  # nothing else understood it, so keep the question alive
+    # A fresh order abandons an unanswered menu. Without this a menu nobody wanted to answer
+    # sat there swallowing every following command with "which one did you mean?", and the
+    # only way out was to answer a question the user had already moved on from.
+    if unanswered is not None and not query.startswith(VERBS) and not QUESTION.match(query):
+        _pending = unanswered  # keep the question alive — this really did look like an answer
         if unanswered[0] == "confirm":
             speak(f"Sorry, I didn't catch that. Should I {unanswered[1]}? Say yes or no.")
         else:
