@@ -5,7 +5,8 @@ from functools import lru_cache
 
 from rapidfuzz import fuzz, process
 
-FUZZ_MIN = 70
+from config import FUZZ_MIN, roots
+
 HOME = os.path.expanduser("~").lower()
 
 KINDS = {
@@ -44,7 +45,7 @@ def _clean(stem):
 
 def _roots():
     """WILCO_ROOT (';'-separated) if set, else every drive — measured at ~3s for C: and D:."""
-    pinned = [p for p in os.environ.get("WILCO_ROOT", "").split(";") if os.path.isdir(p)]
+    pinned = [p for p in roots().split(";") if os.path.isdir(p)]
     return pinned or [f"{d}:\\" for d in string.ascii_uppercase if os.path.isdir(f"{d}:\\")]
 
 

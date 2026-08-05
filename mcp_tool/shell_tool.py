@@ -19,6 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import windows.shell as shell
+from config import MAX_OUTPUT
 from mcp_tool.gate import _park
 
 PROJECT = str(Path(__file__).resolve().parent.parent)
@@ -41,7 +42,6 @@ PY_MUTATES = re.compile(
     r"|\bpip\b",
     re.I)
 
-MAX_OUTPUT = 3000
 
 READ_ONLY = re.compile(
     r"^\s*\(?\s*(?:get-|test-|resolve-|measure-|select-|compare-|convertto-|convertfrom-|"
@@ -80,16 +80,11 @@ def _execute(command):
 
 
 def run_powershell(command):
-    """Run a PowerShell command on this machine. This is the escape hatch for anything the
-    other tools don't cover — services, processes, network config, registry, scheduled tasks,
-    installed packages, hardware details.
-
-    Read-only commands (Get-*, ipconfig, systeminfo, tasklist, ping, dir...) run immediately
-    and return their output. Anything that writes, deletes, installs or reconfigures is NOT
-    run: it comes back asking for confirmation. When that happens, tell the user plainly what
-    the command would do, then call confirm_yes only if they agree.
-
-    Prefer the purpose-built tools when one fits — they are faster and give better answers."""
+    """Run PowerShell on this machine — the escape hatch for services, processes, network
+    config, registry, scheduled tasks, installed packages and hardware. Read-only commands
+    (Get-*, ipconfig, systeminfo, tasklist, ping, dir) run at once and return their output;
+    anything that writes, deletes, installs or reconfigures comes back asking first. Prefer a
+    purpose-built tool when one fits."""
     command = command.strip()
     if not command:
         return "No command given."
@@ -163,23 +158,11 @@ def _execute_bash(command, folder):
 
 
 def run_bash(command, folder=""):
-    """Search the file system with GNU tools — find, grep, ls, wc, du, head, sort, and pipes.
-
-    This is how you look for files by name, pattern or CONTENT, across any file type, which
-    find_files cannot do (it only knows music, video, image and document files).
-
-        find . -name "*.py" | head -20
-        grep -ril "api_key" --include=*.py .
-        ls -lh Downloads | sort -k5 -h | tail -5
-        du -sh */ | sort -h
-        find . -name "*.log" -mtime -7
-
-    folder: where to search from — a Windows path like D:/Codes works. Defaults to the user's
-    home folder. Paths may be written C:/Users/... or /c/Users/... — both work.
-
-    Reading commands run immediately. Anything that removes, moves, copies, downloads or
-    installs is NOT run: it comes back asking first. Say what it would do in plain words,
-    then call confirm_yes only if the user agrees."""
+    """Search the file system with find, grep, ls, wc, du, sort and pipes. This is how you
+    look for files by name, pattern or CONTENT, across any file type — find_files only knows
+    music, video, image and document files. folder: where to search from, a Windows path like
+    D:/Codes works, defaults to home; C:/Users/... and /c/Users/... both work. Reading runs at
+    once; removing, moving, copying or downloading comes back asking first."""
     command = command.strip()
     if not command:
         return "No command given."
@@ -204,23 +187,11 @@ def _execute_python(code):
 
 
 def run_python(code):
-    """Run a snippet of Python on this machine and read back whatever it prints.
-
-    This is how you inspect and diagnose things no other tool covers: enumerate windows,
-    look through the file system, parse a file, do arithmetic on real data, check why
-    something misbehaved. It runs inside Wilco's own project folder, so it can import
-    Wilco's own machinery and use it directly:
-
-        import windows.system as sy; print(sy.windows_matching(''))
-        import windows.apps as ap;   print(ap.find('spotify'))
-        import windows.shell as sh;  print(sh.running_apps())
-        import mcp_tool.ui as ui;    print(ui.list_controls())
-
-    You must print() what you want to see — the return value alone is not captured.
-
-    Code that only reads runs immediately. Anything that writes, deletes, installs, sends or
-    drives the keyboard is NOT run: it comes back asking, and you relay the question in plain
-    words before calling confirm_yes. Prefer a purpose-built tool when one fits."""
+    """Run Python on this machine and read back what it prints. For inspecting or diagnosing
+    anything no other tool covers. Runs inside Wilco's own folder, so it can import and use
+    windows.system, windows.apps, windows.shell and mcp_tool.ui directly. You MUST print()
+    what you want to see. Read-only code runs at once; anything that writes, deletes,
+    installs, sends or drives the keyboard comes back asking first."""
     code = code.strip()
     if not code:
         return "No code given."

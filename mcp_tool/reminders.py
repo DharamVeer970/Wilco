@@ -58,15 +58,10 @@ def _parse(when):
 
 
 def set_reminder(when, text):
-    """Set an alarm or reminder that speaks aloud at the right moment.
-
-    when: a 24-hour clock time such as '07:00' or '19:30', or minutes from now as 'in 10'.
-    Work out the exact time yourself from what the user said — 'quarter past seven tonight'
-    becomes '19:15', 'in half an hour' becomes 'in 30' — and confirm the real time back to
-    them so a misheard number is caught before it matters.
-    text: what to say when it goes off, phrased as you'd say it out loud.
-
-    Reminders are lost if Wilco is restarted; say so if the user sets one far ahead."""
+    """Set an alarm that speaks aloud at the right moment. when: 24-hour time like '07:00' or
+    '19:30', or minutes from now as 'in 10'. Work the exact time out yourself — 'quarter past
+    seven tonight' is '19:15', 'in half an hour' is 'in 30' — and say it back so a misheard
+    number is caught. text: what to say when it fires. Reminders are lost on restart."""
     global _next_id
     target = _parse(when)
     if target is None:

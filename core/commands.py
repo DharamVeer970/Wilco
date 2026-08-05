@@ -12,6 +12,8 @@ import windows.files as files
 from core import agent, context, online
 import windows.shell as shell
 import windows.system as system
+from config import ASK_WHAT_NEXT, FAST_WORDS, LIST_LIMIT, SPEED_STEP
+from core import roman
 from core.brain import ai
 from mcp_tool import gate
 from windows import voice
@@ -37,8 +39,6 @@ KIND_WORDS = {
     "document": ("document", "documents", "pdf", "pdfs", "file", "files"),
 }
 ONLINE = "youtube"
-LIST_LIMIT = 40
-ASK_WHAT_NEXT = False  # the agent carries the conversation now, so the stock prompt just nags
 DOWN = re.compile(r"\b(?:down|low|lower|decrease|reduce|less|quieter|softer|dim|dimmer|darker)\b")
 BRIGHT = re.compile(r"\b(?:brightness|dim|dimmer|darker|brighten|brighter)\b")
 # how fast the words come out, which is not how loud — "louder" belongs to the volume path
@@ -47,8 +47,13 @@ TALK = re.compile(
     r"\b(?:speed|pace|rate|fast|faster|quick|quicker|slow|slower|slowly)\b"
     r"|\b(?:speed\s+up|slow\s+down)\b")
 SLOWER = re.compile(r"\b(?:slow|slower|slowly|down|less)\b")
+# "type hello world" is literal text to put on the keyboard. "write a message to the BH1
+# group" is an instruction to COMPOSE one, and typing that sentence into whatever window
+# happened to be in front is not a smaller version of doing it — it is the wrong thing.
+COMPOSE = re.compile(
+    r"^(?:an?|the|my)?\s*(?:message|msg|text|email|e-?mail|note|reply|sms|whatsapp)\b"
+    r"|\b(?:to|in|on)\s+(?:whatsapp|telegram|gmail|outlook|email|discord|slack|teams)\b")
 RELATIVE = re.compile(r"\b(?:faster|slower|quicker|slowly|more|less|up|down|bit)\b")
-SPEED_STEP = 15
 # each pattern is wrapped before THIS_PC is appended, or the suffix would bind to
 # the last alternative only and "shut down the laptop" would never match
 POWER = [
@@ -65,8 +70,39 @@ STRIP = " .,!?;:'\""
 # Whisper rarely spells an uncommon name the same way twice — add what yours actually hears
 NAME = r"(?:wilco|wilko|will\s?co)"  # grouped, or a suffix would bind to the last alternative only
 
+# A Hindi command matched none of the English patterns, so every single one cost a round trip
+# to the model — two API calls to turn the volume up. Romanising is free, so the spoken Hindi
+# is folded into the English command it means and takes the same instant path. Only the
+# unambiguous ones are here; anything subtler still goes to the agent, where it belongs.
+HINDI = [
+    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*\bband\b", "mute"),
+    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*"
+     r"\b(?:barhaao|barhao|badhao|tez|zyaada|zyada|ooncha|oopar)\b", "volume up"),
+    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*"
+     r"\b(?:kam|ghataao|ghatao|dheere|neeche)\b", "volume down"),
+    (r"\b(?:tez|jaldi|fast)\b.*\bbolo\b", "talk faster"),
+    (r"\b(?:dheere|aaraam|slow)\b.*\bbolo\b", "talk slower"),
+    (r"\bkitane baje|kitne baje|samay kya|time kya\b", "what is the time"),
+    (r"^(?:mera |meri |mere )?(.+?)\s+(?:kholo|khol do|khol|chaaloo karo|chalu karo)\b",
+     "open {}"),
+    (r"^(?:ise|isko|use|usko|ye|yeh)?\s*(.*?)\s*\bband kar(?:o| do)\b", "close {}"),
+]
+_HINDI = [(re.compile(pattern), english) for pattern, english in HINDI]
+PLAIN = re.compile(r"(?:what'?s?|what is|tell me)\s+the\s+(?:time|date)$", re.I)
+
 # what Wilco is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
 _pending = None
+
+
+def _hindi(query):
+    """The English command a Hindi one means, or None. Costs nothing but a lookup table."""
+    latin = (roman.romanise(query) if roman.has_devanagari(query) else query).lower().strip(STRIP)
+    for pattern, english in _HINDI:
+        found = pattern.search(latin)
+        if found:
+            filled = english.format(*found.groups()) if found.groups() else english
+            return filled.strip()
+    return None
 
 
 def _next():
@@ -526,7 +562,6 @@ VERBS = ("open", "show", "play", "search", "google", "find", "type", "write", "s
          "mute", "volume", "brightness", "launch", "start")
 
 
-FAST_WORDS = 9
 QUESTION = re.compile(
     r"^(?:what|why|how|when|where|who|which|whose|whom|whats|what's|"
     r"is|are|was|were|do|does|did|should|shall|may|might|"
@@ -559,11 +594,14 @@ def _split_compound(query):
 def handle(query):
     """Run one command. Return False to quit, True to keep listening."""
     query = query.strip(STRIP)
+    query = _hindi(query) or query
 
     # Anything that isn't a short, plain order goes straight to the agent. It reads the whole
     # sentence and has every tool, so it can act OR answer — where the pattern table can only
     # spot a keyword and hope. A menu waiting for an answer takes priority over this.
-    if _pending is None and _for_the_agent(query):
+    # a couple of questions are not ambiguous at all, and paying two API calls to be told
+    # the time is waste the question-gate was never meant to cause
+    if _pending is None and not PLAIN.match(_bare(query)) and _for_the_agent(query):
         agent.respond(query)
         return True
 
@@ -669,8 +707,9 @@ def _close(name):
         # "close the app" means the one in front, whether or not Wilco is what opened it
         target = context.app or system.foreground_window()[1]
     if not target:
-        speak("Close what? Nothing's in front and I haven't opened anything.")
-        return "command"
+        # nothing recorded and nothing in front, but the agent can read the open windows and
+        # work out what "this" meant — better than telling the user to rephrase
+        return None
     closed = shell.close_app(target)
     if not closed:
         # nothing by that name is running. The agent can look at the open windows and work
@@ -724,7 +763,7 @@ def _dispatch(query, allow_chat=True):
         return "command"
 
     m = re.match(r"(?:type|write)\s+(.+)", query)
-    if m:
+    if m and not COMPOSE.search(m.group(1).strip(STRIP)):
         # type what was actually said, politeness and all — it's literal text
         exact = re.search(r"(?:type|write)\s+(.+)", spoken, re.I)
         do("type_text", (exact or m).group(1).strip(STRIP))

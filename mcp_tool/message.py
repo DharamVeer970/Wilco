@@ -20,10 +20,12 @@ from pathlib import Path
 
 import windows.apps as apps
 import windows.system as system
+from config import EMAIL, EMAIL_PASSWORD, SMTP
+from core import context
 from mcp_tool.gate import _park
 
 CONTACTS = Path(__file__).resolve().parent.parent / "contacts.json"
-SMTP_HOST, SMTP_PORT = os.environ.get("WILCO_SMTP", "smtp.gmail.com:465").split(":")
+SMTP_HOST, SMTP_PORT = SMTP.split(":")
 
 
 def _contacts():
@@ -68,8 +70,7 @@ def send_email(to, subject, body):
     """Send an email. ALWAYS asks for confirmation first — this call does not send anything.
     Read the recipient, the subject and the whole body back to the user, then call confirm_yes
     only if they agree. to: a saved contact name, or a full address."""
-    sender = os.environ.get("WILCO_EMAIL")
-    password = os.environ.get("WILCO_EMAIL_PASSWORD")
+    sender, password = EMAIL, EMAIL_PASSWORD
     if not sender or not password:
         return ("Email isn't set up. The user needs to put WILCO_EMAIL and "
                 "WILCO_EMAIL_PASSWORD in their .env — for Gmail that password must be an App "
@@ -113,6 +114,9 @@ def _open_chat_by_name(name):
         if not system.focus_window("WhatsApp", wait=25):
             return "WhatsApp wouldn't come up, so nothing was sent. Ask the user to open it."
 
+    # remember it as the app in front, or "close this" a moment later has no idea what "this"
+    # was — opening something without recording it is how the thread gets dropped
+    context.app = "WhatsApp"
     time.sleep(1.5)
     for box in ("Search input textbox", "Search or start a new chat", "Search"):
         placed = ui.set_control_text(box, name, window="WhatsApp")
@@ -143,16 +147,12 @@ def _send_by_name(name, message):
 
 
 def send_whatsapp(to, message):
-    """Send a WhatsApp message to a person OR a group. ALWAYS asks for confirmation first —
-    this call sends nothing. Read the recipient and the exact message back, then call
-    confirm_yes only if they agree.
-
-    to: a group name exactly as it appears in WhatsApp, a saved contact name, or a phone
-    number with country code. GROUPS HAVE NO PHONE NUMBER — for a group just pass its name and
-    it is found by searching WhatsApp. Never tell the user a group needs a number; it doesn't.
-
-    This drives the real WhatsApp window, so it is best-effort: repeat what the result says
-    rather than promising the message arrived."""
+    """Send a WhatsApp message to a person OR a group. ALWAYS asks first — this call sends
+    nothing. Read the recipient and the exact message back, then confirm_yes only if they
+    agree. to: a group name exactly as it appears in WhatsApp, a saved contact name, or a
+    phone number with country code. GROUPS HAVE NO PHONE NUMBER — pass the group name and it
+    is found by searching WhatsApp. Best-effort: repeat what the result says rather than
+    promising the message arrived."""
     if not message.strip():
         return "There's no message text yet. Ask the user what to say."
     number = _look_up(to, "phone")

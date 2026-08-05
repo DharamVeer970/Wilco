@@ -38,6 +38,12 @@ def _real_url(href):
     return urllib.parse.unquote(found.group(1)) if found else href
 
 
+# DuckDuckGo puts paid results in the same result__a markup as real ones, so scraping the
+# page hands back Jobrapido before it hands back anything true. An advert is not an answer,
+# and a model given nothing but adverts fills the silence with something plausible instead.
+_ADVERT = re.compile(r"duckduckgo\.com/y\.js|[?&]ad_(?:domain|provider|type)=|/aclick\?")
+
+
 def web_search(query, count=5):
     """Search the web and read back the top results. Use this whenever you are asked about
     news, current events, prices, scores, releases, or any fact you are not certain of.
@@ -49,12 +55,15 @@ def web_search(query, count=5):
         return f"The search didn't go through: {e}"
     links = re.findall(r'result__a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page, re.S)
     snippets = re.findall(r'result__snippet[^>]*>(.*?)</a>', page, re.S)
-    if not links:
-        return f"No results for {query}."
+    kept = [(url, _text(title), _text(snippets[i]) if i < len(snippets) else "")
+            for i, (href, title) in enumerate(links)
+            if not _ADVERT.search(url := _real_url(href))]
+    if not kept:
+        return (f"Nothing but adverts came back for {query}. Say that you couldn't find a real "
+                f"answer and offer to try different wording — do NOT invent one.")
     lines = [f"Search results for {query}:"]
-    for i, (href, title) in enumerate(links[:int(count)]):
-        body = _text(snippets[i]) if i < len(snippets) else ""
-        lines.append(f"{i + 1}. {_text(title)}\n   {body}\n   {_real_url(href)}")
+    for i, (url, title, body) in enumerate(kept[:int(count)], 1):
+        lines.append(f"{i}. {title}\n   {body}\n   {url}")
     return "\n".join(lines)
 
 

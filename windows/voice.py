@@ -13,14 +13,14 @@ background, while the previous group is already playing — so Wilco starts talk
 first short group instead of after the whole paragraph. Short lines it says a lot ("Volume
 up.") are cached on disk, so the second time they come out with no wait at all.
 
-The chosen voice and speed are written to .wilco_voice.json, so switching by voice sticks
-across a restart. WILCO_VOICE and WILCO_SPEED set the starting point before that file exists.
+WILCO_VOICE and WILCO_SPEED in .env decide where it starts. Switching by voice lasts the
+session and is deliberately not written anywhere: .env is the one place settings live, and a
+second file that quietly outranked it was only ever confusing.
 """
 import asyncio
 import ctypes
 import hashlib
 import itertools
-import json
 import os
 import queue
 import re
@@ -30,6 +30,8 @@ import threading
 import pythoncom
 import win32com.client
 from rapidfuzz import fuzz, process
+
+import config
 
 try:
     import edge_tts
@@ -52,16 +54,8 @@ VOICES = {
     "zira": ("sapi:Microsoft Zira", "Built-in Windows female, robotic but instant and offline"),
 }
 LOCAL = "sapi:"
-DEFAULT_VOICE = "ava"
-DEFAULT_SPEED = 25
-SLOWEST, FASTEST = -50, 100
-FIRST_GROUP = 90    # characters — small, so the first words arrive fast
-LATER_GROUP = 400
-LEAST_GROUP = 40
-CACHEABLE = 120
+SLOWEST, FASTEST = -50, 100  # what the voice service itself accepts, not a preference
 
-SETTINGS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        ".wilco_voice.json")
 CACHE = os.path.join(tempfile.gettempdir(), "wilco_tts")
 SENTENCE = re.compile(r"[^.!?\n]+[.!?\n]*")
 
@@ -85,32 +79,8 @@ def _clamp(speed):
     return max(SLOWEST, min(FASTEST, int(speed)))
 
 
-def _load():
-    try:
-        speed = _clamp(os.environ.get("WILCO_SPEED", DEFAULT_SPEED))
-    except (TypeError, ValueError):
-        speed = DEFAULT_SPEED
-    state = {"voice": os.environ.get("WILCO_VOICE", DEFAULT_VOICE), "speed": speed}
-    try:
-        with open(SETTINGS, encoding="utf-8") as f:
-            state.update(json.load(f))
-    except (OSError, ValueError):
-        pass
-    if state["voice"] not in VOICES:
-        state["voice"] = DEFAULT_VOICE
-    state["speed"] = _clamp(state["speed"])
-    return state
-
-
-_state = _load()
-
-
-def _save():
-    try:
-        with open(SETTINGS, "w", encoding="utf-8") as f:
-            json.dump(_state, f)
-    except OSError as e:
-        print("Couldn't remember the voice setting:", e)
+_state = {"voice": config.VOICE if config.VOICE in VOICES else "ava",
+          "speed": _clamp(config.SPEED)}
 
 
 def current():
@@ -125,7 +95,6 @@ def use(name):
     chosen = _resolve(name)
     if chosen:
         _state["voice"] = chosen
-        _save()
     return chosen
 
 
@@ -134,8 +103,7 @@ def set_speed(percent):
     try:
         _state["speed"] = _clamp(percent)
     except (TypeError, ValueError):
-        return _state["speed"]
-    _save()
+        pass
     return _state["speed"]
 
 
@@ -206,7 +174,7 @@ def _synthesise(groups, voice_id, rate, ready):
 def _download(text, voice_id, rate):
     """Fetch one group as mp3. Returns (path, keep) — cached clips are never deleted."""
     os.makedirs(CACHE, exist_ok=True)
-    keep = len(text) <= CACHEABLE
+    keep = len(text) <= config.SPEECH_CACHEABLE
     if keep:
         key = hashlib.md5(f"{voice_id}|{rate}|{text}".encode("utf-8"),
                           usedforsecurity=False).hexdigest()
@@ -257,11 +225,12 @@ def _warm():
 
 def _groups(text):
     """Sentence groups, the first deliberately short so the talking starts sooner."""
-    groups, current_group, limit = [], "", FIRST_GROUP
+    groups, current_group, limit = [], "", config.SPEECH_FIRST_GROUP
     for sentence in SENTENCE.findall(text):
-        if len(current_group) >= LEAST_GROUP and len(current_group) + len(sentence) > limit:
+        if (len(current_group) >= config.SPEECH_LEAST_GROUP
+                and len(current_group) + len(sentence) > limit):
             groups.append(current_group.strip())
-            current_group, limit = sentence, LATER_GROUP
+            current_group, limit = sentence, config.SPEECH_LATER_GROUP
         else:
             current_group += sentence
     groups.append(current_group.strip())

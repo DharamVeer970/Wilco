@@ -271,13 +271,27 @@ was tried and returned a 400 on the same tool schema.
 
 ## Configuration
 
+Everything Wilco has is a setting, every setting has a default in `config.py`, and nothing
+else in the code hardcodes one. So `.env` is the only file you ever edit — change a value,
+restart, done. `.env.example` lists all of them with their defaults.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `HUGGINGFACE_API_KEY` | *required* | Whisper speech-to-text |
 | `COHERE_API_KEY` | *required for the default provider* | Chat + tool calling |
+| `WILCO_PLATFORM` | `cohere` | openai, anthropic, cohere, huggingface, groq, ollama |
+| `WILCO_CHAT_MODEL` | `command-a-03-2025` | The model on that provider |
+| `WILCO_STT_MODEL` | `openai/whisper-large-v3` | Which Whisper does the listening |
 | `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
-| `WILCO_VOICE` | `ava` | Which voice pack it starts in |
-| `WILCO_SPEED` | `25` | Talking pace, as a percentage on top of that voice's own |
+| `WILCO_MIN_PHRASE` / `WILCO_MAX_PHRASE` | `0.4` / `45` | Shortest and longest utterance |
+| `WILCO_LISTEN_TIMEOUT` | `8` | Give up waiting for you to start talking |
+| `WILCO_VOICE` | `ava` | Which voice pack it speaks in |
+| `WILCO_SPEED` | `25` | Talking pace, percent on top of that voice's own |
+| `WILCO_SPEED_STEP` | `15` | How far "talk faster" moves it |
+| `WILCO_MAX_STEPS` / `WILCO_MAX_MESSAGES` | `6` / `40` | Tool rounds per turn, conversation kept |
+| `WILCO_FUZZ_MIN` | `70` | How close a spoken name must be to count as a match |
+| `WILCO_FAST_WORDS` | `9` | Longer than this goes to the agent, not the regex path |
+| `WILCO_SHELL_TIMEOUT` | `25` | Seconds before a shell command is given up on |
 | `WILCO_ROOT` | *(every drive)* | `;`-separated folders to limit the file scan to |
 
 `WILCO_PAUSE` is how long you may go quiet mid-sentence. Every microphone and room differs,
@@ -286,6 +300,10 @@ so tune it: raise it if you're still being cut off, lower it if replies feel slu
 ```ini
 WILCO_PAUSE=3.5
 ```
+
+Two things stay in code on purpose. Protocol constants — virtual key codes, shell flags, API
+endpoints — aren't preferences; changing them breaks the code that reads them. And the
+-50/+100 bounds on speech speed are the limits the voice service itself accepts.
 
 ## Voices
 
@@ -311,8 +329,8 @@ Speed is yours to drive, from -50 to +100 percent of the voice's own pace:
 | "set speech speed to 40" | straight to +40 |
 
 Those hit the instant regex path — no LLM round trip, so the change lands as fast as you can
-say it. Both the voice and the speed are written to `.wilco_voice.json` and survive a restart;
-`WILCO_VOICE` and `WILCO_SPEED` only set where it starts before that file exists.
+say it. A spoken change lasts the session; `WILCO_VOICE` and `WILCO_SPEED` in `.env` are what
+it starts as every time. There is deliberately no second settings file to disagree with them.
 
 A reply is synthesised a sentence or two at a time and played while the rest is still being
 made, so Wilco starts talking before the paragraph is finished. Short lines it repeats a lot

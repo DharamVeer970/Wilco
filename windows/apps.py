@@ -8,12 +8,13 @@ from functools import lru_cache
 import win32com.client
 from rapidfuzz import fuzz, process
 
+from config import FUZZ_MIN
+
 _shlwapi = ctypes.windll.shlwapi
 _shlwapi.SHLoadIndirectString.argtypes = [
     wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.UINT, ctypes.c_void_p
 ]
 
-FUZZ_MIN = 70
 
 ALIASES = {
     "vs code": "visual studio code",

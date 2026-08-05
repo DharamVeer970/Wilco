@@ -15,12 +15,11 @@ from comtypes.client import CreateObject, GetModule
 from rapidfuzz import fuzz, process
 
 import windows.system as system
+from config import FUZZ_MIN, MAX_CONTROLS
 
 GetModule("UIAutomationCore.dll")
 from comtypes.gen import UIAutomationClient as UIA  # noqa: E402 — needs the GetModule above
 
-FUZZ_MIN = 70
-MAX_CONTROLS = 300  # a big window has thousands of nodes; we only ever show a fraction
 
 CONTROL_KINDS = {
     50000: "button", 50002: "checkbox", 50003: "combobox", 50004: "edit",

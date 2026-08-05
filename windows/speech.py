@@ -1,25 +1,16 @@
-import os
-
 import speech_recognition as sr
 from huggingface_hub import InferenceClient
 
+import config
 from config import hf_token, stt_model
 from windows.voice import speak
 
-# How long you can go quiet mid-sentence before Wilco decides you've finished. Thinking
-# pauses are normal in speech, and cutting at 0.8s chopped sentences in half and acted on the
-# fragment. Every real microphone and room is different, so this is a knob: WILCO_PAUSE.
-PAUSE_SECONDS = float(os.environ.get("WILCO_PAUSE", 2.5))
-MIN_PHRASE_SECONDS = 0.4
-MAX_PHRASE_SECONDS = 45  # a long sentence plus its pauses now fits inside one phrase
-LISTEN_TIMEOUT = 8  # stop waiting for speech to start instead of blocking forever
-
 r = sr.Recognizer()
-r.pause_threshold = PAUSE_SECONDS
+r.pause_threshold = config.PAUSE_SECONDS
 # how much silence is kept on each end of the clip, not what ends it — it must stay below
 # pause_threshold or speech_recognition trims audio it hasn't finished collecting
-r.non_speaking_duration = min(0.5, PAUSE_SECONDS / 2)
-r.phrase_threshold = MIN_PHRASE_SECONDS
+r.non_speaking_duration = min(0.5, config.PAUSE_SECONDS / 2)
+r.phrase_threshold = config.MIN_PHRASE_SECONDS
 r.dynamic_energy_threshold = True
 
 hf = InferenceClient(
@@ -42,8 +33,8 @@ def takeCommand():
         with sr.Microphone() as source:
             calibrate(source)
             print("Listening...")
-            audio = r.listen(source, timeout=LISTEN_TIMEOUT,
-                             phrase_time_limit=MAX_PHRASE_SECONDS)
+            audio = r.listen(source, timeout=config.LISTEN_TIMEOUT,
+                             phrase_time_limit=config.MAX_PHRASE_SECONDS)
     except sr.WaitTimeoutError:
         _calibrated = False  # heard nothing at all, so the room's noise floor has moved
         return ""

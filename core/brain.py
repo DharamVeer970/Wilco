@@ -9,11 +9,11 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from config import apikey, base_url, chat_model
+from config import LLM_TIMEOUT, apikey, base_url, chat_model
 from windows.speech import speak
 
 # without these it waits forever on a stalled request, and the whole assistant hangs
-llm = OpenAI(api_key=apikey, base_url=base_url, timeout=30, max_retries=1)
+llm = OpenAI(api_key=apikey, base_url=base_url, timeout=LLM_TIMEOUT, max_retries=1)
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 

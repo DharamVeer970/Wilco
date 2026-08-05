@@ -8,9 +8,10 @@ from ctypes import wintypes
 
 from rapidfuzz import fuzz, process
 
-TIMEOUT = 25
+from config import FUZZ_MIN
+from config import SHELL_TIMEOUT as TIMEOUT
+
 NO_WINDOW = subprocess.CREATE_NO_WINDOW
-FUZZ_MIN = 70
 
 # never close these — Windows dies with them
 CRITICAL = {"csrss", "winlogon", "wininit", "services", "lsass", "smss", "system", "explorer"}

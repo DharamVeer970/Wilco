@@ -7,6 +7,7 @@ import uuid
 from ctypes import wintypes
 
 import win32api
+import win32clipboard
 import win32com.client
 import win32con
 import win32gui
@@ -282,9 +283,54 @@ def wifi(on):
     return out.returncode == 0
 
 
+def clipboard_get():
+    """Whatever text is on the clipboard, or '' if there is none."""
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            if not win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+                return ""
+            return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception:
+        return ""
+
+
+def clipboard_set(text):
+    """Put text on the clipboard. False if another app is holding it."""
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        finally:
+            win32clipboard.CloseClipboard()
+        return True
+    except Exception:
+        return False
+
+
 def type_text(text):
-    escaped = "".join("{%s}" % c if c in "+^%~(){}[]" else c for c in text)
-    win32com.client.Dispatch("WScript.Shell").SendKeys(escaped)
+    """Type into whatever has focus.
+
+    SendKeys can only send keys the active keyboard layout actually has, so Devanagari, emoji
+    and accented letters silently type NOTHING — which looks exactly like the message being
+    sent, because the call reports success either way. Anything outside ASCII therefore goes
+    via the clipboard and Ctrl+V, which carries any script, and the user's own clipboard is
+    put back afterwards so dictating a message doesn't quietly eat what they had copied.
+    """
+    if text.isascii():
+        escaped = "".join("{%s}" % c if c in "+^%~(){}[]" else c for c in text)
+        win32com.client.Dispatch("WScript.Shell").SendKeys(escaped)
+        return text
+    saved = clipboard_get()
+    if not clipboard_set(text):
+        return ""
+    press_key("ctrl+v")
+    time.sleep(0.3)
+    if saved:
+        clipboard_set(saved)
     return text
 
 

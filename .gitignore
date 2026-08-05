@@ -1,5 +1,4 @@
 .env
-.wilco_voice.json
 contacts.json
 test_wilco.py
 __pycache__/

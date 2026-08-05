@@ -17,6 +17,7 @@ import windows.browser as browsers
 import windows.files as files
 import windows.shell as shell
 import windows.system as system
+from config import TEXT_LIMIT
 from core import context
 from mcp_tool.gate import _park
 
@@ -47,17 +48,12 @@ def open_app(name):
 
 
 def open_browser_window(private=False, url="", browser=""):
-    """Open a NEW browser window — private or ordinary.
-
-    THIS is the tool for "incognito", "InPrivate", "private window", "private browsing",
-    "secret tab". Never try to do that through the browser's menu: the menu items are not in
-    list_controls until the menu is open, and a keystroke can land in the wrong window. This
-    starts the browser with its own switch instead, so it works whatever has focus.
-
-    private: true for incognito/InPrivate. url: optional page to open in the new window.
-    browser: edge, chrome, firefox, brave, opera, vivaldi — empty means the user's default.
-    The title of the window that actually appeared is read back, so what this reports is what
-    really happened rather than an assumption."""
+    """Open a NEW browser window, private or ordinary. THIS is the tool for "incognito",
+    "InPrivate", "private window", "private browsing", "secret tab" — never go at it through
+    the browser's menu. Works whatever has focus.
+    private: true for incognito. url: optional page. browser: edge, chrome, firefox, brave,
+    opera, vivaldi — empty means the user's default.
+    Reports the title of the window that actually appeared, so say what it says."""
     private = private in (True, "true", "True", 1, "1", "yes")
     try:
         name, title, looked_private, reused = browsers.open_window(browser, private, url)
@@ -154,9 +150,11 @@ def focus_window(title_part):
 
 # ----------------------------------------------------------------- typing and keys
 def type_text(text, press_enter=False):
-    """Type text into whichever window has focus, as if on the keyboard. Set press_enter true
-    to hit Enter afterwards — that is what submits a search box, a chat message or a URL bar.
-    Focus the right window first with focus_window, or the text lands in the wrong place."""
+    """Type text into whichever window has focus, as if on the keyboard. press_enter true hits
+    Enter afterwards, which submits a search box or URL bar. focus_window first, or it lands in
+    the wrong place. NOT for chat messages: typing into WhatsApp puts the text in whatever
+    conversation was on screen. Use send_whatsapp and send_email — they find the right chat and
+    confirm first."""
     system.type_text(text)
     if press_enter in (True, "true", "True", 1):
         system.press_key("enter")
@@ -165,28 +163,15 @@ def type_text(text, press_enter=False):
 
 
 def press_key(name, times=1):
-    """Press a key or a keyboard shortcut in the window that has focus.
-
-    Write a shortcut as one string with pluses — "ctrl+a", "ctrl+shift+n", "alt+f4".
-    NEVER send the modifier as its own call: pressing "ctrl" and then "a" separately does
-    nothing at all, because a shortcut only registers while the modifier is held.
-
-    Single keys: enter, tab, escape, space, backspace, delete, insert, up, down, left, right,
-    home, end, pageup, pagedown, f1 to f12, any letter, any digit.
-
-    The ones worth knowing:
-      ctrl+a select all      ctrl+c copy         ctrl+v paste      ctrl+x cut
-      ctrl+z undo            ctrl+y redo         ctrl+s save       ctrl+p print
-      ctrl+f find            ctrl+n new window   ctrl+w close tab  ctrl+t new tab
-      alt+tab switch app     alt+f4 close window win+d show desktop
-
-    In a browser, reach for these before hunting through menus — the menu items often are
-    not in list_controls until the menu is opened, but the shortcut always works:
-      ctrl+shift+n InPrivate / incognito window (Edge, Chrome)   ctrl+shift+p (Firefox)
-      ctrl+shift+t reopen the tab you just closed   ctrl+l address bar   f11 full screen
-      alt+f opens the browser's own menu, if you do need to see inside it
-
-    To wipe a text box or document: press ctrl+a, then delete."""
+    """Press a key or shortcut in the focused window. One string with pluses: "ctrl+a",
+    "ctrl+shift+n", "alt+f4". A modifier sent as its own call does nothing.
+    Keys: enter tab escape space backspace delete insert up down left right home end
+    pageup pagedown f1-f12, any letter or digit.
+    ctrl+a select all, +c copy, +v paste, +x cut, +z undo, +s save, +f find, +t new tab,
+    +w close tab, +shift+t reopen tab, +l address bar, +n new window; f11 full screen,
+    alt+tab switch, alt+f4 close, alt+f browser menu, win+d desktop.
+    ctrl+shift+n is incognito in Edge/Chrome, ctrl+shift+p in Firefox — the shortcut works
+    even when the menu item is not in list_controls yet. Clear a box with ctrl+a then delete."""
     if not system.press_key(name, int(times)):
         return (f"'{name}' isn't a key I can press. Write shortcuts as one string like "
                 f"'ctrl+a'. A modifier on its own does nothing.")
@@ -269,7 +254,6 @@ def list_folder_contents(folder_name, kind="any"):
             "; ".join(f"{n} ({k})" for k, n in items[:30]))
 
 
-TEXT_LIMIT = 6000
 
 
 def _resolve(path):
@@ -347,6 +331,67 @@ def edit_file(path, find, replace):
         f"change {hits} place{'s' if hits > 1 else ''} in {os.path.basename(full)} "
         f"from {find[:60]!r} to {preview!r}",
         lambda: _write(full, original.replace(find, replace)))
+
+
+def clipboard(text=""):
+    """Read the Windows clipboard, or put something on it. Leave text empty to read what is
+    there — that is how you answer "what did I just copy", "read my clipboard", "what's
+    copied". Pass text to put it on the clipboard so the user can paste it anywhere, which
+    beats type_text when the target window isn't focused or the text is long."""
+    if text:
+        if not system.clipboard_set(text):
+            return "Another app is holding the clipboard, so nothing was copied."
+        return f"Put {len(text)} characters on the clipboard."
+    held = system.clipboard_get()
+    if not held.strip():
+        return "The clipboard is empty, or has something on it that isn't text."
+    return f"The clipboard holds ({len(held)} chars): {held[:TEXT_LIMIT]}"
+
+
+def manage_file(action, source, destination=""):
+    """Move, copy or rename a file or folder, or make a new folder.
+    action: move, copy, rename, new_folder. source: a full path, or a name find_files would
+    turn up. destination: where it goes; for rename just the new name; unused for new_folder.
+    Never overwrites — if the destination exists it refuses. delete_file first to replace."""
+    action = (action or "").strip().lower()
+    if action not in ("move", "copy", "rename", "new_folder"):
+        return f"{action!r} isn't one of: move, copy, rename, new_folder."
+    full = _resolve(source)
+
+    if action == "new_folder":
+        if os.path.exists(full):
+            return f"{full} already exists."
+        try:
+            os.makedirs(full)
+        except OSError as e:
+            return f"Couldn't create {full}: {e.strerror or e}"
+        return f"Created the folder {full}."
+
+    if not os.path.exists(full):
+        found = files.matches("document", source) or files.matches("image", source)
+        hint = f" Did you mean {found[0][1]}?" if found else ""
+        return f"There's nothing at {full}.{hint} Use find_files to get the real path."
+    if not destination:
+        return f"{action} needs a destination — where should {os.path.basename(full)} go?"
+
+    target = _resolve(destination)
+    if action == "rename" or os.path.isdir(os.path.dirname(target)) and not os.path.isdir(target):
+        target = target if os.sep in destination or ":" in destination else \
+            os.path.join(os.path.dirname(full), destination)
+    elif os.path.isdir(target):
+        target = os.path.join(target, os.path.basename(full))
+    if os.path.exists(target):
+        return (f"{target} already exists, so nothing was touched. Delete it first if the "
+                f"user really wants it replaced.")
+    try:
+        if action == "copy":
+            shutil.copytree(full, target) if os.path.isdir(full) else shutil.copy2(full, target)
+        else:
+            shutil.move(full, target)
+    except OSError as e:
+        return f"Couldn't {action} {full}: {e.strerror or e}"
+    done = {"move": "Moved", "copy": "Copied", "rename": "Renamed"}[action]
+    return f"{done} {os.path.basename(full)} to {target}."
 
 
 def delete_file(name, kind="any"):

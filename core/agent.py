@@ -11,14 +11,12 @@ import re
 import time
 
 import mcp_tool
-from config import chat_model
-from core.brain import PROMPTS, complete, llm
+from config import EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, chat_model
+from core import roman
+from core.brain import PROMPTS, llm
 from windows.speech import speak
 
 SYSTEM_PROMPT = (PROMPTS / "agent.txt").read_text(encoding="utf-8").strip()
-
-MAX_STEPS = 6      # tool rounds in one turn, before we stop and admit it
-MAX_MESSAGES = 40  # rolling window, trimmed on whole turns
 
 history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -48,32 +46,49 @@ def _speakable(text):
     return "\n".join(kept).strip()
 
 
-# Devanagari and friends: the Windows SAPI voice has no idea what to do with these and simply
-# says nothing, which looks like a crash rather than a language problem. The prompt asks for
-# Hinglish; this catches the times it slips and rewrites rather than going silent.
-_NON_LATIN = re.compile(r"[ऀ-ॿঀ-৿਀-੿஀-௿ఀ-౿]")
-
-
+# The voice can be handed Devanagari and simply say nothing, which looks like a crash rather
+# than a language problem. Converting it is a lookup table, so core/roman.py does it here
+# instead of spending an API call — a third of the month's quota, for a Hindi speaker.
 def _romanise(text):
     """Rewrite non-Latin script into Latin letters so the voice can actually say it."""
-    if not text or not _NON_LATIN.search(text):
+    if not roman.has_devanagari(text):
         return text
-    print("[romanising — the voice can't pronounce that script]")
+    return roman.romanise(text)
+
+
+# The model sometimes TYPES a tool call instead of making one, and sometimes narrates an
+# action it never took. Both leave the user told it happened when it didn't, which is the
+# worst thing this can do — so both are caught rather than trusted.
+_WRITTEN = re.compile(r"[\[{].*[\]}]", re.S)
+_CLAIMED = re.compile(
+    r"\b(?:i(?:'ve| have)?\s+(?:just\s+|now\s+)?(?:opened|set|changed|closed|sent|created|"
+    r"deleted|increased|decreased|reduced|switched|started|launched|turned|played|typed|"
+    r"saved|updated|added|removed|adjusted)|"
+    r"(?:reminder|alarm|timer|volume|brightness|speed)\s+(?:is\s+|has\s+been\s+)?set|"
+    r"(?:it'?s|that'?s|all)\s+done)\b", re.I)
+
+
+def _written_calls(text):
+    """Tool calls the model wrote out as text instead of making. Returns [(name, arguments)]."""
+    if not text or not any(k in text for k in ("tool_name", "tool_call_id", '"name"')):
+        return []
+    block = _WRITTEN.search(text)
+    if not block:
+        return []
     try:
-        rewritten = complete([
-            {"role": "system",
-             "content": "Rewrite the user's text in Latin letters only, keeping the same "
-                        "language and meaning — Hindi becomes Hinglish the way people type "
-                        "it in chat. Keep English words as English. Reply with the rewritten "
-                        "text and nothing else."},
-            {"role": "user", "content": text}])
-        return rewritten.strip() if rewritten and rewritten.strip() else text
-    except Exception as e:
-        print("Romanise failed:", e)
-        return text
-
-
-EMPTY_TRIES = 3
+        data = json.loads(block.group(0))
+    except json.JSONDecodeError:
+        return []
+    found = []
+    for item in (data if isinstance(data, list) else [data]):
+        if not isinstance(item, dict):
+            continue
+        name = next((item[k] for k in ("tool_name", "name") if isinstance(item.get(k), str)), "")
+        arguments = next((item[k] for k in ("parameters", "arguments")
+                          if isinstance(item.get(k), dict)), {})
+        if name in mcp_tool.REGISTRY:
+            found.append((name, arguments))
+    return found
 
 
 def _ask():
@@ -149,7 +164,8 @@ def respond(text, already_done=()):
     checkpoint = len(history)  # everything from here is this turn, and unwinds together
     history.append({"role": "user", "content": text})
 
-    acted = False
+    acted = bool(already_done)  # the instant path did it, so a claim about it is not a lie
+    nudged = False
     for _ in range(MAX_STEPS):
         try:
             message = _ask()
@@ -168,7 +184,29 @@ def respond(text, already_done=()):
         history.append(_as_dict(message))
 
         if not message.tool_calls:
+            written = _written_calls(message.content)
+            if written:
+                acted = True
+                results = [f"{name}: {mcp_tool.call(name, arguments)}"
+                           for name, arguments in written]
+                for line in results:
+                    print(f"  -> {line[:160]}  [recovered from text]")
+                history.append({"role": "user", "content":
+                                "Those tool calls were written as text, so they have now been "
+                                "run for you. Results — " + "; ".join(results) +
+                                ". Tell the user what happened, in a sentence or two."})
+                continue
+
             spoken = _romanise(_speakable(message.content))
+            if not acted and not nudged and _CLAIMED.search(spoken):
+                nudged = True
+                print("  [claimed an action without calling anything — asking again]")
+                history.append({"role": "user", "content":
+                                "You described that as done, but you called no tool, so "
+                                "nothing actually happened. Call the tool that does it now, "
+                                "or say plainly that you can't."})
+                continue
+
             speak(spoken or "Done.")
             _trim()
             return

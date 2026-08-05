@@ -17,12 +17,11 @@ import subprocess
 import time
 import winreg
 
+import config
 import windows.system as system
 
 APP_PATHS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
 USER_CHOICE = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
-APPEAR_WAIT = 12.0
-MARK_GRACE = 2.5
 
 BROWSERS = {
     "edge": ("msedge.exe", "--inprivate", "--new-window", "inprivate", "edge"),
@@ -111,7 +110,7 @@ def open_window(name="", private=False, url=""):
 
     before = {hwnd for hwnd, _ in its_windows()}
     subprocess.Popen(command, close_fds=True)
-    deadline = time.monotonic() + APPEAR_WAIT
+    deadline = time.monotonic() + config.BROWSER_WAIT
     newest, settled = "", None
     while time.monotonic() < deadline:
         fresh = [title for hwnd, title in its_windows() if hwnd not in before]
@@ -124,7 +123,7 @@ def open_window(name="", private=False, url=""):
                 return chosen, newest, False, False
             # the window is up but hasn't named itself private yet, so give the title a
             # moment to settle rather than waiting out the whole appearance deadline
-            settled = settled or time.monotonic() + MARK_GRACE
+            settled = settled or time.monotonic() + config.BROWSER_GRACE
             if time.monotonic() >= settled:
                 break
         time.sleep(0.25)
