@@ -9,6 +9,7 @@ and can carry on talking about it, so an action and the conversation about it ar
 turn. Tools never speak — core/agent.py does that once, at the end.
 """
 import inspect
+from typing import Union
 
 from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web
 
@@ -17,11 +18,34 @@ JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
 def _json_type(param):
-    """Prefer an annotation, else infer from the default — untyped params are strings."""
-    if param.annotation is not inspect.Parameter.empty:
-        return JSON_TYPES.get(param.annotation, "string")
-    if param.default is not inspect.Parameter.empty and param.default is not None:
-        return JSON_TYPES.get(type(param.default), "string")
+    """Prefer an annotation, else infer from the default — untyped params are strings.
+
+    Handles the common container types too: list/tuple/set become arrays, dict becomes an
+    object, and Optional[X] / X | None resolve to the wrapped type. Anything else falls back
+    to string, which is the safe default for a spoken-command tool set.
+    """
+    annotation = param.annotation
+    if annotation is inspect.Parameter.empty:
+        # no annotation — infer from the default's type, else it's a string
+        if param.default is not inspect.Parameter.empty and param.default is not None:
+            annotation = type(param.default)
+        else:
+            return "string"
+
+    # unwrap Optional[X] and X | None to the underlying type
+    origin = getattr(annotation, "__origin__", None)
+    if origin is Union:
+        args = [a for a in getattr(annotation, "__args__", ()) if a is not type(None)]
+        if len(args) == 1:
+            annotation = args[0]
+            origin = getattr(annotation, "__origin__", None)
+
+    if origin is list or origin is tuple or origin is set:
+        return "array"
+    if origin is dict:
+        return "object"
+    if isinstance(annotation, type):
+        return JSON_TYPES.get(annotation, "string")
     return "string"
 
 

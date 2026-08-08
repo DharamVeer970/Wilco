@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-64-6E56CF" alt="64 tools">
+  <img src="https://img.shields.io/badge/tools-70-6E56CF" alt="70 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -15,7 +15,7 @@
 ---
 
 Wilco listens on the mic, transcribes with Whisper, and either fires a local command instantly
-or hands the utterance to an agent that can call **64 tools** — apps, files, folders, volume,
+or hands the utterance to an agent that can call **70 tools** — apps, files, folders, volume,
 brightness, media, Windows settings, the controls inside any window, web search, YouTube, and
 PowerShell. Replies are spoken back in a neural voice — thirteen voice packs, switchable by
 voice mid-conversation, at whatever pace you ask for.
@@ -106,7 +106,11 @@ if pip tries to compile it.
 | "pause" / "next" / "stop" | Real media keys — works with Spotify, VLC, browsers |
 | "what's my ip" / "how much disk space" | Machine state, spoken |
 | "find every python file mentioning api_key" | grep across files, any type |
+| "search my files for password" | Offline content search — finds files that contain the text |
 | "what's taking up space in downloads" | find / du / sort through real files |
+| "open D:/Codes" / "open the directory C:/Users/me" | Opens a directory by its full path |
+| "what drives do I have" / "list drives" | Lists drives with free space |
+| "how big is my report" / "where is the config file" | File size, modified date and full path |
 | "what can you do" | Lists its own tools by area |
 | "are you working properly" | Parses every file, checks the gates, and really creates/edits a throwaway file to prove the tools work |
 | "read my notes file" | Reads any text file back |
@@ -215,7 +219,7 @@ machine on its own.
 
 ## Use it as an MCP server
 
-The same 60 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+The same 70 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
 so Claude Desktop, Claude Code or any MCP client can drive this machine.
 
 ```jsonc
@@ -234,7 +238,7 @@ written for the voice loop appears over MCP with no extra work:
 
 ```
 main.py ──────┐
-              ├──> mcp_tool.REGISTRY ──> 60 tools
+              ├──> mcp_tool.REGISTRY ──> 70 tools
 mcp_server.py ┘
 ```
 
@@ -293,6 +297,7 @@ restart, done. `.env.example` lists all of them with their defaults.
 | `WILCO_FAST_WORDS` | `9` | Longer than this goes to the agent, not the regex path |
 | `WILCO_SHELL_TIMEOUT` | `25` | Seconds before a shell command is given up on |
 | `WILCO_ROOT` | *(every drive)* | `;`-separated folders to limit the file scan to |
+| `WILCO_AI_OUTPUT_DIR` | `Openai` | Where "using artificial intelligence" answers are saved |
 
 `WILCO_PAUSE` is how long you may go quiet mid-sentence. Every microphone and room differs,
 so tune it: raise it if you're still being cut off, lower it if replies feel sluggish.

@@ -218,6 +218,106 @@ def find_files(name, kind="any"):
                                                 for k, n, p in hits[:15])
 
 
+def search_file_contents(text, folder="", max_results=10):
+    """Search the CONTENTS of files on this computer for a word or phrase — offline, no
+    internet. This is how you answer "find the file that mentions X", "which file has my
+    password", "search my notes for Y". Searches text files (txt, md, py, json, csv, log,
+    config, code) under a folder, or the whole user profile if none is given. Returns the
+    file paths that contain the text. Use find_files for searching by NAME instead."""
+    text_lower = text.strip().lower()
+    if not text_lower:
+        return "What text should I search for?"
+    where = folder.strip() or os.path.expanduser("~")
+    if not os.path.isdir(where):
+        return f"There's no folder at {where}."
+    # text-ish extensions worth reading; skip binaries and media
+    TEXT_EXTS = {".txt", ".md", ".py", ".json", ".csv", ".log", ".ini", ".cfg", ".conf",
+                 ".yaml", ".yml", ".xml", ".html", ".htm", ".css", ".js", ".ts", ".java",
+                 ".c", ".cpp", ".h", ".sh", ".bat", ".ps1", ".toml", ".env", ".gitignore"}
+    SKIP_DIRS = {"node_modules", "site-packages", ".git", "__pycache__", "venv", ".venv",
+                 "appdata", "windows", "program files", "program files (x86)", "$recycle.bin"}
+    hits = []
+    try:
+        for root, dirs, names in os.walk(where):
+            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS and not d.startswith(("$", "."))]
+            for name in names:
+                if os.path.splitext(name)[1].lower() not in TEXT_EXTS:
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    with open(path, encoding="utf-8", errors="ignore") as handle:
+                        if text_lower in handle.read().lower():
+                            hits.append(path)
+                            if len(hits) >= int(max_results):
+                                return (f"Found {len(hits)} files containing {text!r}: " +
+                                        "; ".join(hits))
+                except (OSError, UnicodeDecodeError):
+                    continue
+    except OSError as e:
+        return f"Couldn't search {where}: {e.strerror or e}"
+    if not hits:
+        return f"No text files under {where} contain {text!r}."
+    return f"Found {len(hits)} files containing {text!r}: " + "; ".join(hits)
+
+
+def open_directory(path):
+    """Open a directory in File Explorer by its full path — 'C:/Users/me/Documents',
+    'D:/Codes', '~/Downloads'. Use this when the user names a specific location rather than
+    a known folder like 'downloads' or 'documents'."""
+    full = _resolve(path)
+    if not os.path.isdir(full):
+        return f"There's no directory at {full}."
+    files.open_file(full)
+    context.folder = full
+    return f"Opened the directory {full}."
+
+
+def list_drives():
+    """List the drives on this computer — C:, D:, and any others — with how much space each
+    has free. Use when the user asks what drives exist or where their files might be."""
+    drives = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = f"{letter}:\\"
+        if os.path.isdir(root):
+            try:
+                total, used, free = shutil.disk_usage(root)
+                drives.append(f"{root} ({free // (2**30)} GB free of {total // (2**30)} GB)")
+            except OSError:
+                drives.append(f"{root} (unreadable)")
+    if not drives:
+        return "I couldn't find any drives."
+    return "Drives: " + "; ".join(drives)
+
+
+def file_info(name, kind="any"):
+    """Get details about a file — its full path, size, type and last-modified date. Use when
+    the user asks how big a file is, when it was changed, or where exactly it lives."""
+    kinds = KINDS if kind in ("any", "", None) else (kind,)
+    hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
+    if not hits:
+        return f"No file matching {name}."
+    if len(hits) > 1:
+        listed = "; ".join(f"{n} ({k})" for k, n, p in hits[:10])
+        return f"{len(hits)} files match: {listed}. Ask which one, then call file_info again."
+    _, found_name, path = hits[0]
+    try:
+        stat = os.stat(path)
+        size = stat.st_size
+        modified = datetime.datetime.fromtimestamp(stat.st_mtime)
+        if size >= 2**30:
+            size_str = f"{size / 2**30:.1f} GB"
+        elif size >= 2**20:
+            size_str = f"{size / 2**20:.1f} MB"
+        elif size >= 2**10:
+            size_str = f"{size / 2**10:.1f} KB"
+        else:
+            size_str = f"{size} bytes"
+        return (f"{found_name}: {size_str}, last modified {modified:%d %B %Y at %I:%M %p}, "
+                f"at {path}")
+    except OSError as e:
+        return f"Couldn't read info for {path}: {e.strerror or e}"
+
+
 def open_file(name, kind="any"):
     """Open a file by name in its default application. If several match, they are listed
     rather than guessed — ask which one, then call again with a fuller name."""

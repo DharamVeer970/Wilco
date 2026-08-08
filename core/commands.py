@@ -89,6 +89,11 @@ HINDI = [
 ]
 _HINDI = [(re.compile(pattern), english) for pattern, english in HINDI]
 PLAIN = re.compile(r"(?:what'?s?|what is|tell me)\s+the\s+(?:time|date)$", re.I)
+# recall questions — "what was that", "what did i search for". They are follow-ups to the
+# instant path's own memory (context.query / file / app), so they must NOT be sent to the
+# agent by the question-gate, or the follow-up table never gets to answer them.
+RECALL = re.compile(r"what(?:'s| is| was)\s+(?:that|it|this|playing)"
+                    r"|what did (?:you play|i search(?: for)?)", re.I)
 
 # what Wilco is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
 _pending = None
@@ -502,7 +507,24 @@ def do(action, target):
         speak(f"Wi-Fi turned {state}." if ok else "I need administrator rights to change Wi-Fi.")
         return True
     if action == "time":
-        speak(f"Sir, the time is {datetime.datetime.now():%H bajke %M} minutes")
+        now = datetime.datetime.now()
+        hour = now.hour % 12 or 12
+        minute = now.minute
+        if minute == 0:
+            time_str = f"{hour} o'clock"
+        elif minute < 10:
+            time_str = f"{hour} oh {minute}"
+        elif minute < 30:
+            time_str = f"{hour} {minute}"
+        elif minute == 30:
+            time_str = f"half past {hour}"
+        elif minute < 45:
+            time_str = f"{hour} {minute}"
+        else:
+            next_hour = (now.hour + 1) % 12 or 12
+            time_str = f"{60 - minute} to {next_hour}"
+        period = "in the morning" if now.hour < 12 else ("in the afternoon" if now.hour < 17 else "in the evening")
+        speak(f"The time is {time_str} {period}.")
         return True
     if action == "open_settings":
         page = system.settings_page(target)
@@ -579,6 +601,8 @@ def _for_the_agent(query):
     Short imperatives — "volume up", "open notepad", "pause" — stay on the instant path.
     """
     bare = _bare(query)
+    if RECALL.match(bare):
+        return False  # these are answered from the instant path's own memory, not the agent
     return bool(QUESTION.match(bare)) or len(bare.split()) > FAST_WORDS
 
 
@@ -782,6 +806,43 @@ def _dispatch(query, allow_chat=True):
     m = re.match(r"(?:open|go to)\s+(?:my\s+|the\s+)?([\w ]+?)\s+folder", query)
     if m:
         do("open_folder", m.group(1))
+        return "command"
+    # offline content search — "search my files for X", "find the file that mentions X"
+    m = re.match(r"(?:search|find|look for)\s+(?:my\s+|the\s+)?(?:files?|notes|documents?|laptop|computer|pc)"
+                 r"\s+(?:for|that (?:has|have|mentions?|contains?|says?|includes?))\s+(.+)", query)
+    if m:
+        text = m.group(1).strip(STRIP)
+        if text:
+            from mcp_tool.pc import search_file_contents
+            result = search_file_contents(text)
+            speak(result[:400] if len(result) > 400 else result)
+            return "command"
+    # open a directory by path — "open D:/Codes", "open the directory C:/Users/me"
+    m = re.match(r"(?:open|go to)\s+(?:the\s+)?(?:directory|folder|path)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)", query)
+    if m:
+        from mcp_tool.pc import open_directory
+        result = open_directory(m.group(1))
+        speak(result)
+        return "command"
+    m = re.match(r"(?:open|go to)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)$", query)
+    if m:
+        from mcp_tool.pc import open_directory
+        result = open_directory(m.group(1))
+        speak(result)
+        return "command"
+    # list drives — "what drives do I have", "list drives"
+    if re.fullmatch(r"(?:what\s+)?drives?\s+(?:do\s+(?:i|you)\s+have|are\s+there|list)?", query) \
+            or re.fullmatch(r"list\s+(?:the\s+)?drives?", query):
+        from mcp_tool.pc import list_drives
+        speak(list_drives())
+        return "command"
+    # file info — "how big is X", "when was X modified", "where is X"
+    m = re.match(r"(?:(?:how\s+big\s+is|what\s+size\s+is|when\s+was|where\s+is|info\s+on|"
+                 r"size\s+of)\s+(?:the\s+)?(.+))", query)
+    if m:
+        from mcp_tool.pc import file_info
+        result = file_info(m.group(1).strip(STRIP))
+        speak(result)
         return "command"
     if re.fullmatch(r"(?:mute|unmute)(?:\s+(?:the\s+)?(?:sound|volume|audio))?", query):
         do("mute", "")

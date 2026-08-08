@@ -12,6 +12,9 @@ from openai import OpenAI
 from config import LLM_TIMEOUT, apikey, base_url, chat_model
 from windows.speech import speak
 
+# where one-shot "using artificial intelligence" answers are saved
+AI_OUTPUT_DIR = os.environ.get("WILCO_AI_OUTPUT_DIR", "Openai")
+
 # without these it waits forever on a stalled request, and the whole assistant hangs
 llm = OpenAI(api_key=apikey, base_url=base_url, timeout=LLM_TIMEOUT, max_retries=1)
 
@@ -33,10 +36,10 @@ def ai(prompt):
         speak("Failed to process the AI request.")
         return
 
-    os.makedirs("Openai", exist_ok=True)
+    os.makedirs(AI_OUTPUT_DIR, exist_ok=True)
     # name the file after the request, dropping the "...artificial intelligence" prefix
     topic = prompt.split("intelligence", 1)[-1].strip()
     name = re.sub(r'[<>:"/\\|?*\s]+', "_", topic)[:50] or "prompt"
-    with open(f"Openai/{name}.txt", "w", encoding="utf-8") as f:
+    with open(os.path.join(AI_OUTPUT_DIR, f"{name}.txt"), "w", encoding="utf-8") as f:
         f.write(f"Response for prompt: {prompt}\n{'*' * 25}\n\n{answer}")
-    speak("The response has been saved.")
+    speak(f"The response has been saved to {AI_OUTPUT_DIR}.")

@@ -60,6 +60,13 @@ if platform not in PLATFORMS:
 
 base_url, key_var = PLATFORMS[platform]
 apikey = os.environ[key_var] if key_var else "ollama"
+if not os.environ.get("HUGGINGFACE_API_KEY"):
+    raise SystemExit(
+        "HUGGINGFACE_API_KEY is missing. Speech-to-text runs on Hugging Face Whisper "
+        "whatever the chat provider is, so this key is always required.\n"
+        "Get one at https://huggingface.co/settings/tokens (a read token is enough) "
+        "and put it in your .env file."
+    )
 hf_token = os.environ["HUGGINGFACE_API_KEY"]
 
 MAX_STEPS = _number("WILCO_MAX_STEPS", 6, int)
