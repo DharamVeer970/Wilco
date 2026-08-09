@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-70-6E56CF" alt="70 tools">
+  <img src="https://img.shields.io/badge/tools-71-6E56CF" alt="71 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -105,6 +105,7 @@ if pip tries to compile it.
 | "close chrome" / "close the app" | Closes the whole app, and every window it owns |
 | "pause" / "next" / "stop" | Real media keys — works with Spotify, VLC, browsers |
 | "what's my ip" / "how much disk space" | Machine state, spoken |
+| "check for updates" / "are there updates" | Read-only Windows update check |
 | "find every python file mentioning api_key" | grep across files, any type |
 | "search my files for password" | Offline content search — finds files that contain the text |
 | "what's taking up space in downloads" | find / du / sort through real files |

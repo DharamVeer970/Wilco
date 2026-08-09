@@ -54,8 +54,14 @@ def _reply_kind(text):
 def _park(description, action):
     """Hold an action until confirmed. Returns what the model should tell the user."""
     _pending[session.get()] = (description, action)
-    return (f"NOT DONE. This needs the user's spoken permission first. Ask them, in your own "
-            f"words, whether to go ahead with: {description}. Do not claim it is done.")
+    return (f"NOT DONE — this action is parked and is NOT running. It is already queued under "
+            f"this session, so DO NOT call this tool again to 'make it run'. Ask the user, in "
+            f"your own words, whether to go ahead with: {description}. "
+            f"Then STOP — do not call any tool — and wait for their spoken reply. "
+            f"If they clearly agree (yes, yeah, go ahead, sure, haan, ji), call confirm_yes "
+            f"with no arguments — that runs the queued action. "
+            f"If they clearly refuse (no, don't, cancel, nahi, mat karo), call cancel_action. "
+            f"Never call this same tool a second time; that only parks it again.")
 
 
 def confirm_yes():

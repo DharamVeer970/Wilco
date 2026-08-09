@@ -17,7 +17,7 @@ import windows.browser as browsers
 import windows.files as files
 import windows.shell as shell
 import windows.system as system
-from config import TEXT_LIMIT
+from config import MAX_OUTPUT, TEXT_LIMIT
 from core import context
 from mcp_tool.gate import _park
 
@@ -589,6 +589,28 @@ def system_info(what):
     if not reader:
         return f"I can read: {', '.join(readers)}."
     return reader()
+
+
+def check_windows_updates():
+    """Check what Windows updates are available right now — read-only, installs nothing.
+    Use when the user asks if there are updates, whether Windows is up to date, or wants
+    to 'check for updates'. Reports the update titles, or that none are pending."""
+    script = (
+        "$Session = New-Object -ComObject Microsoft.Update.Session; "
+        "$Searcher = $Session.CreateUpdateSearcher(); "
+        "$Count = $Searcher.GetTotalHistoryCount(); "
+        "$Results = $Searcher.Search('IsInstalled=0'); "
+        "if($Results.Updates.Count -eq 0) { 'No updates available.' } else { "
+        "'Updates available (' + $Results.Updates.Count + '):'; "
+        "$Results.Updates | ForEach-Object { $_.Title } }"
+    )
+    try:
+        output = shell.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
+    except Exception as e:
+        return f"Couldn't check for updates: {e}"
+    if not output or "No updates available" in output:
+        return "No Windows updates are available right now."
+    return f"Windows updates available: {output.strip()[:MAX_OUTPUT]}"
 
 
 def power_action(action):
