@@ -1,7 +1,7 @@
 import sys
 
 from core.commands import handle
-from windows.speech import speak, takeCommand
+from windows.speech import speak, take_command
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -10,7 +10,7 @@ if __name__ == "__main__":
     speak("Welcome to Wilco AI")
 
     while True:
-        query = takeCommand()
+        query = take_command()
         if not query:
             continue
         try:

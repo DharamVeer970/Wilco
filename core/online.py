@@ -6,6 +6,10 @@ import requests
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en"}
 
+# One connection pool, kept alive between searches — DNS lookup and TLS handshake
+# happen once per process instead of once per call, which matters on the voice loop.
+SESSION = requests.Session()
+
 
 def _initial_data(page):
     """The ytInitialData blob, parsed. None if YouTube changed the page shape."""
@@ -45,7 +49,7 @@ def search(query, limit=8):
     """[(title, video_id)] for a YouTube search, top result first."""
     url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(query)
     try:
-        page = requests.get(url, headers=HEADERS, timeout=20).text
+        page = SESSION.get(url, headers=HEADERS, timeout=20).text
     except requests.RequestException:
         return []
     data = _initial_data(page)

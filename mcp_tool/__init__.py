@@ -11,9 +11,9 @@ turn. Tools never speak — core/agent.py does that once, at the end.
 import inspect
 from typing import Union
 
-from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web
+from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow
 
-MODULES = (pc, ui, web, reminders, message, shell_tool, selftest, voice, gate)
+MODULES = (pc, ui, web, reminders, message, shell_tool, workflow, selftest, voice, gate)
 JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 

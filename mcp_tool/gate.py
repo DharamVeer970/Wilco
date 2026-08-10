@@ -15,7 +15,7 @@ _pending = {}  # session -> (spoken description, zero-arg callable)
 STRIP = " .,!?;:'\""
 # Politeness carries no decision. "Thank you" on its own is not consent, so it is peeled off
 # before judging: "yes please" is a yes, bare "thanks" is not.
-_POLITE_TAIL = re.compile(r"[\s,]*(?:please|thanks?|thank\s+you|jarvis|wilco|sir|bro|man)[\s,]*$",
+_POLITE_TAIL = re.compile(r"(?:please|thanks?|thank\s+you|jarvis|wilco|sir|bro|man)[\s,]*$",
                           re.I)
 _YES = re.compile(
     r"(?:(?:yes|yeah|yep|yup|yah|ya|sure|ok|okay|kk|alright|all right|fine|right|correct|"

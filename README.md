@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-71-6E56CF" alt="71 tools">
+  <img src="https://img.shields.io/badge/tools-77-6E56CF" alt="77 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -15,7 +15,7 @@
 ---
 
 Wilco listens on the mic, transcribes with Whisper, and either fires a local command instantly
-or hands the utterance to an agent that can call **70 tools** — apps, files, folders, volume,
+or hands the utterance to an agent that can call **77 tools** — apps, files, folders, volume,
 brightness, media, Windows settings, the controls inside any window, web search, YouTube, and
 PowerShell. Replies are spoken back in a neural voice — thirteen voice packs, switchable by
 voice mid-conversation, at whatever pace you ask for.
@@ -69,8 +69,8 @@ a read token is enough.
 rates and crypto prices all serve anonymous requests, so there is no signup, no key to rotate,
 and nothing to expire quietly months from now. Only the chat model and Whisper need keys.
 
-`PyAudio` is needed by `SpeechRecognition` for mic input; on Windows install a prebuilt wheel
-if pip tries to compile it.
+Microphone capture uses `sounddevice`, which installs without compiling PyAudio or PortAudio on
+supported Windows Python versions, including Python 3.14.
 
 ## What it can do
 
@@ -104,6 +104,7 @@ if pip tries to compile it.
 | "close the tab in chrome" | Focuses Chrome first, then closes one tab |
 | "close chrome" / "close the app" | Closes the whole app, and every window it owns |
 | "pause" / "next" / "stop" | Real media keys — works with Spotify, VLC, browsers |
+| "scroll down" / "scroll up" | Scrolls the focused app by a page; works in documents, chats and browsers |
 | "what's my ip" / "how much disk space" | Machine state, spoken |
 | "check for updates" / "are there updates" | Read-only Windows update check |
 | "find every python file mentioning api_key" | grep across files, any type |
@@ -220,7 +221,7 @@ machine on its own.
 
 ## Use it as an MCP server
 
-The same 70 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+The same 77 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
 so Claude Desktop, Claude Code or any MCP client can drive this machine.
 
 ```jsonc
@@ -239,7 +240,7 @@ written for the voice loop appears over MCP with no extra work:
 
 ```
 main.py ──────┐
-              ├──> mcp_tool.REGISTRY ──> 70 tools
+              ├──> mcp_tool.REGISTRY ──> 77 tools
 mcp_server.py ┘
 ```
 

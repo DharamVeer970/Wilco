@@ -155,6 +155,8 @@ def type_text(text, press_enter=False):
     the wrong place. NOT for chat messages: typing into WhatsApp puts the text in whatever
     conversation was on screen. Use send_whatsapp and send_email — they find the right chat and
     confirm first."""
+    if not system.foreground_window()[0]:
+        return "No app window is focused, so I didn't type anywhere. Focus or open the app first."
     system.type_text(text)
     if press_enter in (True, "true", "True", 1):
         system.press_key("enter")
@@ -176,6 +178,23 @@ def press_key(name, times=1):
         return (f"'{name}' isn't a key I can press. Write shortcuts as one string like "
                 f"'ctrl+a'. A modifier on its own does nothing.")
     return f"Pressed {name}" + (f" {times} times." if int(times) > 1 else ".")
+
+
+def scroll(direction="down", pages=1):
+    """Scroll the focused app up or down. direction: up or down. pages: 1 to 10 whole-page
+    steps. Use this for long chats, documents, web pages, lists, and feeds after focusing the
+    app. It uses Page Up/Page Down, so it follows the keyboard focus instead of the mouse."""
+    direction = direction.strip().lower()
+    if direction not in ("up", "down"):
+        return "Direction must be 'up' or 'down'."
+    if not system.foreground_window()[0]:
+        return "No app window is focused, so there is nowhere to scroll."
+    try:
+        pages = max(1, min(10, int(pages)))
+    except (TypeError, ValueError):
+        return "Pages must be a number from 1 to 10."
+    system.press_key(f"page{direction}", pages)
+    return f"Scrolled {direction} {pages} page{'s' if pages != 1 else ''}."
 
 
 def search_in_windows(query):
@@ -218,6 +237,32 @@ def find_files(name, kind="any"):
                                                 for k, n, p in hits[:15])
 
 
+# text-ish extensions worth reading; skip binaries and media
+TEXT_EXTS = {".txt", ".md", ".py", ".json", ".csv", ".log", ".ini", ".cfg", ".conf",
+             ".yaml", ".yml", ".xml", ".html", ".htm", ".css", ".js", ".ts", ".java",
+             ".c", ".cpp", ".h", ".sh", ".bat", ".ps1", ".toml", ".env", ".gitignore"}
+SKIP_DIRS = {"node_modules", "site-packages", ".git", "__pycache__", "venv", ".venv",
+             "appdata", "windows", "program files", "program files (x86)", "$recycle.bin"}
+
+
+def _text_files(where):
+    """Every text-ish file under a folder, the noisy directories skipped."""
+    for root, dirs, names in os.walk(where):
+        dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS and not d.startswith(("$", "."))]
+        for name in names:
+            if os.path.splitext(name)[1].lower() in TEXT_EXTS:
+                yield os.path.join(root, name)
+
+
+def _holds(path, needle):
+    """True when a file's text contains the phrase. Unreadable files simply don't match."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            return needle in handle.read().lower()
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def search_file_contents(text, folder="", max_results=10):
     """Search the CONTENTS of files on this computer for a word or phrase — offline, no
     internet. This is how you answer "find the file that mentions X", "which file has my
@@ -230,29 +275,13 @@ def search_file_contents(text, folder="", max_results=10):
     where = folder.strip() or os.path.expanduser("~")
     if not os.path.isdir(where):
         return f"There's no folder at {where}."
-    # text-ish extensions worth reading; skip binaries and media
-    TEXT_EXTS = {".txt", ".md", ".py", ".json", ".csv", ".log", ".ini", ".cfg", ".conf",
-                 ".yaml", ".yml", ".xml", ".html", ".htm", ".css", ".js", ".ts", ".java",
-                 ".c", ".cpp", ".h", ".sh", ".bat", ".ps1", ".toml", ".env", ".gitignore"}
-    SKIP_DIRS = {"node_modules", "site-packages", ".git", "__pycache__", "venv", ".venv",
-                 "appdata", "windows", "program files", "program files (x86)", "$recycle.bin"}
     hits = []
     try:
-        for root, dirs, names in os.walk(where):
-            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS and not d.startswith(("$", "."))]
-            for name in names:
-                if os.path.splitext(name)[1].lower() not in TEXT_EXTS:
-                    continue
-                path = os.path.join(root, name)
-                try:
-                    with open(path, encoding="utf-8", errors="ignore") as handle:
-                        if text_lower in handle.read().lower():
-                            hits.append(path)
-                            if len(hits) >= int(max_results):
-                                return (f"Found {len(hits)} files containing {text!r}: " +
-                                        "; ".join(hits))
-                except (OSError, UnicodeDecodeError):
-                    continue
+        for path in _text_files(where):
+            if _holds(path, text_lower):
+                hits.append(path)
+                if len(hits) >= int(max_results):
+                    break
     except OSError as e:
         return f"Couldn't search {where}: {e.strerror or e}"
     if not hits:
@@ -280,7 +309,7 @@ def list_drives():
         root = f"{letter}:\\"
         if os.path.isdir(root):
             try:
-                total, used, free = shutil.disk_usage(root)
+                total, _, free = shutil.disk_usage(root)
                 drives.append(f"{root} ({free // (2**30)} GB free of {total // (2**30)} GB)")
             except OSError:
                 drives.append(f"{root} (unreadable)")
@@ -330,7 +359,7 @@ def open_file(name, kind="any"):
         listed = "; ".join(f"{n} ({k})" for k, n, p in hits[:10])
         return f"{len(hits)} files match: {listed}. Ask which one, then call open_file again."
 
-    kind_found, found_name, path = hits[0]
+    _, found_name, path = hits[0]
     files.open_file(path)
     context.file = path
     return f"Opened {found_name} from {os.path.dirname(path)}."
@@ -448,6 +477,40 @@ def clipboard(text=""):
     return f"The clipboard holds ({len(held)} chars): {held[:TEXT_LIMIT]}"
 
 
+def _new_folder(full):
+    if os.path.exists(full):
+        return f"{full} already exists."
+    try:
+        os.makedirs(full)
+    except OSError as e:
+        return f"Couldn't create {full}: {e.strerror or e}"
+    return f"Created the folder {full}."
+
+
+def _destination_for(action, full, destination):
+    """Where it actually lands — a rename stays put, an existing folder takes it inside."""
+    target = _resolve(destination)
+    if action == "rename" or os.path.isdir(os.path.dirname(target)) and not os.path.isdir(target):
+        if os.sep in destination or ":" in destination:
+            return target
+        return os.path.join(os.path.dirname(full), destination)
+    if os.path.isdir(target):
+        return os.path.join(target, os.path.basename(full))
+    return target
+
+
+def _carry_out(action, full, target):
+    try:
+        if action == "copy":
+            shutil.copytree(full, target) if os.path.isdir(full) else shutil.copy2(full, target)
+        else:
+            shutil.move(full, target)
+    except OSError as e:
+        return f"Couldn't {action} {full}: {e.strerror or e}"
+    done = {"move": "Moved", "copy": "Copied", "rename": "Renamed"}[action]
+    return f"{done} {os.path.basename(full)} to {target}."
+
+
 def manage_file(action, source, destination=""):
     """Move, copy or rename a file or folder, or make a new folder.
     action: move, copy, rename, new_folder. source: a full path, or a name find_files would
@@ -459,13 +522,7 @@ def manage_file(action, source, destination=""):
     full = _resolve(source)
 
     if action == "new_folder":
-        if os.path.exists(full):
-            return f"{full} already exists."
-        try:
-            os.makedirs(full)
-        except OSError as e:
-            return f"Couldn't create {full}: {e.strerror or e}"
-        return f"Created the folder {full}."
+        return _new_folder(full)
 
     if not os.path.exists(full):
         found = files.matches("document", source) or files.matches("image", source)
@@ -474,24 +531,11 @@ def manage_file(action, source, destination=""):
     if not destination:
         return f"{action} needs a destination — where should {os.path.basename(full)} go?"
 
-    target = _resolve(destination)
-    if action == "rename" or os.path.isdir(os.path.dirname(target)) and not os.path.isdir(target):
-        target = target if os.sep in destination or ":" in destination else \
-            os.path.join(os.path.dirname(full), destination)
-    elif os.path.isdir(target):
-        target = os.path.join(target, os.path.basename(full))
+    target = _destination_for(action, full, destination)
     if os.path.exists(target):
         return (f"{target} already exists, so nothing was touched. Delete it first if the "
                 f"user really wants it replaced.")
-    try:
-        if action == "copy":
-            shutil.copytree(full, target) if os.path.isdir(full) else shutil.copy2(full, target)
-        else:
-            shutil.move(full, target)
-    except OSError as e:
-        return f"Couldn't {action} {full}: {e.strerror or e}"
-    done = {"move": "Moved", "copy": "Copied", "rename": "Renamed"}[action]
-    return f"{done} {os.path.basename(full)} to {target}."
+    return _carry_out(action, full, target)
 
 
 def delete_file(name, kind="any"):

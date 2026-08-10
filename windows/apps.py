@@ -16,10 +16,12 @@ _shlwapi.SHLoadIndirectString.argtypes = [
 ]
 
 
+VS_CODE = "visual studio code"
+
 ALIASES = {
-    "vs code": "visual studio code",
-    "vscode": "visual studio code",
-    "code": "visual studio code",
+    "vs code": VS_CODE,
+    "vscode": VS_CODE,
+    "code": VS_CODE,
     "chrome": "google chrome",
     "cmd": "command prompt",
     "explorer": "file explorer",
@@ -98,13 +100,22 @@ def _progids(ext):
     return ids
 
 
+def _exe_in(cmd):
+    """The first .exe in a shell open command, whether or not its path is quoted."""
+    for i, part in enumerate(cmd.split('"')):
+        tokens = [part] if i % 2 else part.split()
+        hit = next((t for t in tokens if t.lower().endswith(".exe")), None)
+        if hit:
+            return hit
+    return None
+
+
 def _app_for(progid):
     """(display name, exe path) that a ProgID opens with, or None."""
     exe = None
     try:
-        cmd = winreg.QueryValue(winreg.HKEY_CLASSES_ROOT, progid + r"\shell\open\command")
-        found = re.findall(r'"([^"]+\.exe)"|(\S+\.exe)', cmd, re.I)
-        exe = next((a or b for a, b in found), None)
+        exe = _exe_in(winreg.QueryValue(winreg.HKEY_CLASSES_ROOT,
+                                        progid + r"\shell\open\command"))
     except OSError:
         pass
     try:

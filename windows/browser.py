@@ -78,6 +78,28 @@ def resolve(name):
     return next((n for n in BROWSERS if n in wanted or wanted in n), None)
 
 
+def _appeared(its_windows, before, mark, private):
+    """Wait for a new window and report (its title, whether it names itself private)."""
+    deadline = time.monotonic() + config.BROWSER_WAIT
+    newest, settled = "", None
+    while time.monotonic() < deadline:
+        fresh = [title for hwnd, title in its_windows() if hwnd not in before]
+        marked = next((t for t in fresh if mark in t.lower()), "")
+        if marked:
+            return marked, True
+        if fresh:
+            newest = fresh[0]
+            if not private:
+                return newest, False
+            # the window is up but hasn't named itself private yet, so give the title a
+            # moment to settle rather than waiting out the whole appearance deadline
+            settled = settled or time.monotonic() + config.BROWSER_GRACE
+            if time.monotonic() >= settled:
+                break
+        time.sleep(0.25)
+    return newest, False
+
+
 def open_window(name="", private=False, url=""):
     """Open a new browser window, private or not.
 
@@ -110,24 +132,10 @@ def open_window(name="", private=False, url=""):
 
     before = {hwnd for hwnd, _ in its_windows()}
     subprocess.Popen(command, close_fds=True)
-    deadline = time.monotonic() + config.BROWSER_WAIT
-    newest, settled = "", None
-    while time.monotonic() < deadline:
-        fresh = [title for hwnd, title in its_windows() if hwnd not in before]
-        marked = next((t for t in fresh if mark in t.lower()), "")
-        if marked:
-            return chosen, marked, True, False
-        if fresh:
-            newest = fresh[0]
-            if not private:
-                return chosen, newest, False, False
-            # the window is up but hasn't named itself private yet, so give the title a
-            # moment to settle rather than waiting out the whole appearance deadline
-            settled = settled or time.monotonic() + config.BROWSER_GRACE
-            if time.monotonic() >= settled:
-                break
-        time.sleep(0.25)
+    newest, looked_private = _appeared(its_windows, before, mark, private)
+    if looked_private or not private:
+        return chosen, newest, looked_private, False
     already = next((t for _, t in its_windows() if mark in t.lower()), "")
-    if private and already:
+    if already:
         return chosen, already, True, True
     return chosen, newest, False, False

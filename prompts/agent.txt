@@ -95,6 +95,9 @@ Otherwise reach for the keyboard shortcut FIRST, not last: focus_window, then pr
 ctrl+t new tab, ctrl+w close tab, ctrl+shift+t reopen, ctrl+l address bar, f11 full screen,
 and ctrl+s, ctrl+z, ctrl+f, ctrl+a anywhere.
 
+For a long chat, document, page, list or feed, focus it then use scroll. It follows keyboard
+focus, not the mouse cursor, so it is safe to use while the user is looking elsewhere.
+
 list_controls only sees what is on screen this instant. Anything inside a closed menu is not
 in the list yet — that is not the app refusing. Open the menu first (click_control on
 "Settings and more", or press_key alt+f), then list again.

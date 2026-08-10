@@ -35,42 +35,51 @@ def has_devanagari(text):
     return any(_devanagari(c) for c in text or "")
 
 
+def _consonant(text, i):
+    """(sound, index just past it) for the consonant at i, or (None, i)."""
+    pair = text[i:i + 2]
+    if pair in CONSONANTS:
+        return CONSONANTS[pair], i + 2
+    if text[i] in CONSONANTS:
+        return CONSONANTS[text[i]], i + 1
+    return None, i
+
+
+def _vowel(text, i):
+    """(the vowel sound riding on the consonant before i, index just past it)."""
+    if i >= len(text):
+        return "", i
+    if text[i] == VIRAMA:
+        return "", i + 1
+    if text[i] in MATRAS:
+        matra = MATRAS[text[i]]
+        # mid-word the आ-matra is long — kaam, kaart — but at the end of a word
+        # Hinglish writes it short: kya, khelega, achha
+        if matra == "aa" and not _devanagari(text[i + 1:i + 2]):
+            matra = "a"
+        return matra, i + 1
+    return ("a", i) if _devanagari(text[i]) else ("", i)
+
+
+def _plain(ch):
+    """A standalone vowel, digit or sign, or the character itself when it is neither."""
+    for table in (VOWELS, MATRAS, DIGITS, SIGNS):
+        if ch in table:
+            return table[ch]
+    return ch
+
+
 def romanise(text):
     """Devanagari written in Latin letters, the way people type Hinglish in chat."""
     out, i, size = [], 0, len(text)
     while i < size:
-        pair = text[i:i + 2]
-        if pair in CONSONANTS:
-            sound, i = CONSONANTS[pair], i + 2
-        elif text[i] in CONSONANTS:
-            sound, i = CONSONANTS[text[i]], i + 1
-        else:
-            sound = None
-
-        if sound is not None:
-            out.append(sound)
-            if i < size and text[i] == VIRAMA:
-                i += 1
-            elif i < size and text[i] in MATRAS:
-                matra = MATRAS[text[i]]
-                i += 1
-                # mid-word the आ-matra is long — kaam, kaart — but at the end of a word
-                # Hinglish writes it short: kya, khelega, achha
-                if matra == "aa" and (i >= size or not _devanagari(text[i])):
-                    matra = "a"
-                out.append(matra)
-            elif i < size and _devanagari(text[i]):
-                out.append("a")
+        sound, after = _consonant(text, i)
+        if sound is None:
+            out.append(_plain(text[i]))
+            i += 1
             continue
-
-        ch = text[i]
-        for table in (VOWELS, MATRAS, DIGITS, SIGNS):
-            if ch in table:
-                out.append(table[ch])
-                break
-        else:
-            out.append(ch)
-        i += 1
+        vowel, i = _vowel(text, after)
+        out += [sound, vowel]
     return "".join(p for p in out if p)
 
 

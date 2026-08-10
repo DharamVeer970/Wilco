@@ -151,6 +151,64 @@ def _trim():
             del history[1]
 
 
+def _turn_failed(checkpoint, acted, error):
+    print("Agent error:", error)
+    # Roll the whole turn back. Deleting just the last message used to strip a tool
+    # RESULT when the failure landed mid-loop, stranding the tool call that produced
+    # it — and a stranded tool call breaks every request that follows it, for good.
+    del history[checkpoint:]
+    # If tools already ran, the work really happened — saying "I couldn't reach my
+    # brain" would be a lie about a machine the user is looking at.
+    speak("I did that, but couldn't put the reply together. Ask again for the details?"
+          if acted else "I couldn't reach my brain just then. Say that again?")
+
+
+def _run_calls(calls):
+    """Run every tool call in one assistant message, recording each result."""
+    for call in calls:
+        try:
+            arguments = json.loads(call.function.arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        print(f"  -> {call.function.name}({arguments})")
+        result = mcp_tool.call(call.function.name, arguments)
+        print(f"     {result[:160]}")
+        history.append({"role": "tool", "tool_call_id": call.id, "content": result})
+
+
+def _run_written(written):
+    """Run the tool calls the model typed out as text, then tell it they have been run."""
+    results = [f"{name}: {mcp_tool.call(name, arguments)}" for name, arguments in written]
+    for line in results:
+        print(f"  -> {line[:160]}  [recovered from text]")
+    history.append({"role": "user", "content":
+                    "Those tool calls were written as text, so they have now been "
+                    "run for you. Results — " + "; ".join(results) +
+                    ". Tell the user what happened, in a sentence or two."})
+
+
+def _nudge():
+    print("  [claimed an action without calling anything — asking again]")
+    history.append({"role": "user", "content":
+                    "You described that as done, but you called no tool, so "
+                    "nothing actually happened. Call the tool that does it now, "
+                    "or say plainly that you can't."})
+
+
+def _no_calls(message, acted, nudged):
+    """Deal with a message that called nothing. 'ran', 'nudged' or 'spoke'."""
+    written = _written_calls(message.content)
+    if written:
+        _run_written(written)
+        return "ran"
+    spoken = _romanise(_speakable(message.content))
+    if not acted and not nudged and _CLAIMED.search(spoken):
+        _nudge()
+        return "nudged"
+    speak(spoken or "Done.")
+    return "spoke"
+
+
 def respond(text, already_done=()):
     """Handle one spoken turn: call tools until the model is done, then say the reply.
 
@@ -170,57 +228,22 @@ def respond(text, already_done=()):
         try:
             message = _ask()
         except Exception as e:
-            print("Agent error:", e)
-            # Roll the whole turn back. Deleting just the last message used to strip a tool
-            # RESULT when the failure landed mid-loop, stranding the tool call that produced
-            # it — and a stranded tool call breaks every request that follows it, for good.
-            del history[checkpoint:]
-            # If tools already ran, the work really happened — saying "I couldn't reach my
-            # brain" would be a lie about a machine the user is looking at.
-            speak("I did that, but couldn't put the reply together. Ask again for the details?"
-                  if acted else "I couldn't reach my brain just then. Say that again?")
+            _turn_failed(checkpoint, acted, e)
             return
 
         history.append(_as_dict(message))
 
-        if not message.tool_calls:
-            written = _written_calls(message.content)
-            if written:
-                acted = True
-                results = [f"{name}: {mcp_tool.call(name, arguments)}"
-                           for name, arguments in written]
-                for line in results:
-                    print(f"  -> {line[:160]}  [recovered from text]")
-                history.append({"role": "user", "content":
-                                "Those tool calls were written as text, so they have now been "
-                                "run for you. Results — " + "; ".join(results) +
-                                ". Tell the user what happened, in a sentence or two."})
-                continue
+        if message.tool_calls:
+            _run_calls(message.tool_calls)
+            acted = True
+            continue
 
-            spoken = _romanise(_speakable(message.content))
-            if not acted and not nudged and _CLAIMED.search(spoken):
-                nudged = True
-                print("  [claimed an action without calling anything — asking again]")
-                history.append({"role": "user", "content":
-                                "You described that as done, but you called no tool, so "
-                                "nothing actually happened. Call the tool that does it now, "
-                                "or say plainly that you can't."})
-                continue
-
-            speak(spoken or "Done.")
+        outcome = _no_calls(message, acted, nudged)
+        if outcome == "spoke":
             _trim()
             return
-
-        for call in message.tool_calls:
-            try:
-                arguments = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                arguments = {}
-            print(f"  -> {call.function.name}({arguments})")
-            result = mcp_tool.call(call.function.name, arguments)
-            print(f"     {result[:160]}")
-            acted = True
-            history.append({"role": "tool", "tool_call_id": call.id, "content": result})
+        acted = acted or outcome == "ran"
+        nudged = nudged or outcome == "nudged"
 
     speak("That turned into more steps than I expected, so I've stopped. What were you after?")
     _trim()

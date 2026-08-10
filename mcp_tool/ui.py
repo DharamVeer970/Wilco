@@ -10,7 +10,6 @@ name, and a toggle reports the state it ended up in, so a claim of success is ch
 """
 import ctypes
 
-import win32gui
 from comtypes.client import CreateObject, GetModule
 from rapidfuzz import fuzz, process
 
@@ -48,9 +47,8 @@ def _automation():
 
 def _window(title_part=""):
     """The UIA element for a window, focusing it first so it is the one being talked about."""
-    if title_part:
-        if not system.focus_window(title_part, wait=2.0):
-            return None, ""
+    if title_part and not system.focus_window(title_part, wait=2.0):
+        return None, ""
     hwnd, title = system.foreground_window()
     if not hwnd:
         return None, ""
@@ -141,11 +139,14 @@ def list_controls(window="", kind=""):
     element, title = _window(window)
     if element is None:
         return f"No window matching {window or 'the foreground'} to read."
-    controls = _nodes(element)
+    all_controls = _nodes(element)
+    controls = all_controls
     if kind:
-        controls = [c for c in controls if c[1] == kind.lower().strip()]
+        controls = [c for c in all_controls if c[1] == kind.lower().strip()]
     if not controls:
-        kinds = sorted({c[1] for c in _nodes(element)})
+        # all_controls already walked the tree once — don't walk it again just for the
+        # "what it does have" list, it is the expensive call on a busy window
+        kinds = sorted({c[1] for c in all_controls})
         return (f"{title} has no {kind or ''} controls. What it does have: "
                 f"{', '.join(kinds) or 'nothing readable'}.")
     described = [f"{name} [{control_kind}{'=' + state if state else ''}]"
@@ -153,22 +154,8 @@ def list_controls(window="", kind=""):
     return f"Controls in {title}: " + "; ".join(described)
 
 
-def click_control(name, window=""):
-    """Press, tick or toggle a named control inside a window — a button, a checkbox, an
-    on/off switch, a list item. This is how you actually change a setting rather than just
-    opening the page that holds it. For a switch, the state it ended up in is reported back,
-    so say that rather than assuming. window: part of a window title, or empty for the front
-    one. If the name isn't found, call list_controls and use the real wording."""
-    element, title = _window(window)
-    if element is None:
-        return f"No window matching {window or 'the foreground'}."
-    controls = _nodes(element)
-    picked = _pick(name, controls)
-    if not picked:
-        nearby = "; ".join(f"{c[0]} [{c[1]}]" for c in controls[:25]) or "nothing readable"
-        return (f"No control called {name} in {title}. What's actually there: {nearby}. "
-                f"Use one of those names, or tell the user it isn't on this screen.")
-    found_name, kind, before, node = picked
+def _activate(node, found_name, kind, before, title):
+    """Use the first supported UI Automation actuator and report the observed outcome."""
     for pattern_id, how in ACTUATORS:
         try:
             pattern = node.GetCurrentPattern(pattern_id)
@@ -194,6 +181,25 @@ def click_control(name, window=""):
             f"mouse click, so tell the user what to click rather than claiming it's done.")
 
 
+def click_control(name, window=""):
+    """Press, tick or toggle a named control inside a window — a button, a checkbox, an
+    on/off switch, a list item. This is how you actually change a setting rather than just
+    opening the page that holds it. For a switch, the state it ended up in is reported back,
+    so say that rather than assuming. window: part of a window title, or empty for the front
+    one. If the name isn't found, call list_controls and use the real wording."""
+    element, title = _window(window)
+    if element is None:
+        return f"No window matching {window or 'the foreground'}."
+    controls = _nodes(element)
+    picked = _pick(name, controls)
+    if not picked:
+        nearby = "; ".join(f"{c[0]} [{c[1]}]" for c in controls[:25]) or "nothing readable"
+        return (f"No control called {name} in {title}. What's actually there: {nearby}. "
+                f"Use one of those names, or tell the user it isn't on this screen.")
+    found_name, kind, before, node = picked
+    return _activate(node, found_name, kind, before, title)
+
+
 def set_control_text(name, text, window=""):
     """Type into a named text box — a search box, an address bar, a form field — without
     relying on what currently has focus. Use this for 'search inside Settings' or 'search in
@@ -203,7 +209,8 @@ def set_control_text(name, text, window=""):
     if element is None:
         return f"No window matching {window or 'the foreground'}."
     boxes = [c for c in _nodes(element) if c[1] in ("edit", "combobox")]
-    picked = _pick(name, boxes) if name else (boxes[0] if boxes else None)
+    first_box = boxes[0] if boxes else None
+    picked = _pick(name, boxes) if name else first_box
     if not picked:
         available = "; ".join(c[0] for c in boxes) or "none"
         return f"No text box called {name} in {title}. Text boxes here: {available}."

@@ -8,6 +8,14 @@ from ctypes import wintypes
 
 from rapidfuzz import fuzz, process
 
+if __name__ == "__main__" and __package__ is None:
+    # `python windows/shell.py` runs the assertions at the bottom; without this the
+    # module can't find config.py because sys.path[0] is the windows dir.
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from config import FUZZ_MIN
 from config import SHELL_TIMEOUT as TIMEOUT
 
@@ -38,9 +46,9 @@ def computer_name():
 
 def wifi_status():
     out = run(["netsh", "wlan", "show", "interfaces"])
-    state = re.search(r"^\s*State\s*:\s*(.+)$", out, re.M)
-    ssid = re.search(r"^\s*SSID\s*:\s*(.+)$", out, re.M)
-    signal = re.search(r"^\s*Signal\s*:\s*(\d+%)", out, re.M)
+    state = re.search(r"^[ \t]*State[ \t]*:[ \t]*(\S.*)$", out, re.M)
+    ssid = re.search(r"^[ \t]*SSID[ \t]*:[ \t]*(\S.*)$", out, re.M)
+    signal = re.search(r"^[ \t]*Signal[ \t]*:[ \t]*(\d+%)", out, re.M)
     if not state:
         return None
     if ssid:
@@ -108,7 +116,7 @@ def battery_percent():
 
 
 def uptime():
-    since = re.search(r"since\s+(.+)$", run(["net", "statistics", "workstation"]), re.M)
+    since = re.search(r"since[ \t]+(\S.*)$", run(["net", "statistics", "workstation"]), re.M)
     return since.group(1).strip() if since else None
 
 
@@ -170,10 +178,11 @@ def cancel_shutdown():
 
 if __name__ == "__main__":
     assert any(c == "C:" and 0 < free <= total for c, free, total in disk_free()), disk_free()
-    _demo = {"chrome": "chrome.exe", "code": "Code.exe", "csrss": "csrss.exe", "notepad": "notepad.exe"}
+    _NOTEPAD = "notepad.exe"
+    _demo = {"chrome": "chrome.exe", "code": "Code.exe", "csrss": "csrss.exe", "notepad": _NOTEPAD}
     assert _best_image("Google Chrome", _demo) == "chrome.exe"
     assert _best_image("Visual Studio Code", _demo) == "Code.exe"
-    assert _best_image("notepad.exe", _demo) == "notepad.exe"
+    assert _best_image(_NOTEPAD, _demo) == _NOTEPAD
     assert _best_image("csrss", {"csrss": "csrss.exe"}) is None, "must never target a critical process"
     assert _best_image("qqqq zzzz", _demo) is None
     print("ok:", disk_free(), ip_address(), computer_name(), battery_percent())

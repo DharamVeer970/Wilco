@@ -8,7 +8,6 @@ Credentials are never handled by Wilco. The address and app password are read fr
 environment, so they live in .env and nowhere else.
 """
 import json
-import os
 import re
 import smtplib
 import ssl
@@ -60,7 +59,9 @@ def _send_email_now(to, subject, body, sender, password):
     message = EmailMessage()
     message["From"], message["To"], message["Subject"] = sender, to, subject
     message.set_content(body)
-    with smtplib.SMTP_SSL(SMTP_HOST, int(SMTP_PORT), context=ssl.create_default_context()) as s:
+    tls_context = ssl.create_default_context()
+    tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    with smtplib.SMTP_SSL(SMTP_HOST, int(SMTP_PORT), context=tls_context) as s:
         s.login(sender, password)
         s.send_message(message)
     return f"Sent to {to}."
@@ -146,6 +147,14 @@ def _send_by_name(name, message):
             f"right chat — this picks the top search result, so it can pick the wrong one.")
 
 
+def _raw_phone(value):
+    """A directly supplied WhatsApp number, never a number looked up from contacts.json."""
+    value = value.strip()
+    if re.fullmatch(r"[+\d][\d\s\-()]{6,}", value):
+        return re.sub(r"\D", "", value)
+    return None
+
+
 def send_whatsapp(to, message):
     """Send a WhatsApp message to a person OR a group. ALWAYS asks first — this call sends
     nothing. Read the recipient and the exact message back, then confirm_yes only if they
@@ -155,7 +164,7 @@ def send_whatsapp(to, message):
     promising the message arrived."""
     if not message.strip():
         return "There's no message text yet. Ask the user what to say."
-    number = _look_up(to, "phone")
+    number = _raw_phone(to)
     if number:
         return _park(f"send {to} a WhatsApp saying: {message}",
                      lambda: _send_to_number(number, message))

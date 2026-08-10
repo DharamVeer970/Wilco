@@ -98,7 +98,9 @@ def cancel_reminder(which="all"):
         for timer, _, _ in _reminders.values():
             timer.cancel()
         _reminders.clear()
-        return f"Cancelled {count} reminder{'s' if count != 1 else ''}." if count else "Nothing set."
+        if not count:
+            return "Nothing set."
+        return f"Cancelled {count} reminder{'s' if count != 1 else ''}."
     try:
         reminder_id = int(which)
     except ValueError:

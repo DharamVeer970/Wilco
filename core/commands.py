@@ -12,7 +12,7 @@ import windows.files as files
 from core import agent, context, online
 import windows.shell as shell
 import windows.system as system
-from config import ASK_WHAT_NEXT, FAST_WORDS, LIST_LIMIT, SPEED_STEP
+from config import ASK_WHAT_NEXT, LIST_LIMIT, SPEED_STEP
 from core import roman
 from core.brain import ai
 from mcp_tool import gate
@@ -67,6 +67,7 @@ MEDIA_WORDS = {"pause": "play_pause", "resume": "play_pause", "play_pause": "pla
                "next": "next", "skip": "next", "previous": "previous", "back": "previous",
                "stop": "stop"}
 STRIP = " .,!?;:'\""
+WHICH = "which one?"
 # Whisper rarely spells an uncommon name the same way twice — add what yours actually hears
 NAME = r"(?:wilco|wilko|will\s?co)"  # grouped, or a suffix would bind to the last alternative only
 
@@ -118,11 +119,12 @@ def _kind(word):
     return next((k for k, w in KIND_WORDS.items() if word in w), None)
 
 
+KIND_ASKED = re.compile(
+    r"(?:play|open|show|list|start|listen to)\s+(?:me\s+)?(?:(?:my|all|some|the|a)\s+)?(\w+)")
+
+
 def _kind_asked_for(query):
-    m = re.fullmatch(
-        r"(?:play|open|show|list|start|listen to)\s+(?:me\s+)?(?:my|all|some|the|a)?\s*(\w+)",
-        query,
-    )
+    m = KIND_ASKED.fullmatch(query)
     return _kind(m.group(1)) if m else None
 
 
@@ -188,7 +190,7 @@ def open_any_file(name, kinds=("document", "image", "video", "music")):
         return False
     if len(several) == 1:
         return _open_path(*several[0])
-    _menu("which one?", [f"{n}   ({k}) [{os.path.dirname(p)}]" for k, n, p in several])
+    _menu(WHICH, [f"{n}   ({k}) [{os.path.dirname(p)}]" for k, n, p in several])
     _pending = ("files", several)
     _ask_choice([n for _, n, _ in several], "files")
     return True
@@ -215,7 +217,7 @@ def open_app(name):
         return False
     if len(found) > 1:
         labels = [d for d, _ in found]
-        _menu("which one?", labels)
+        _menu(WHICH, labels)
         _pending = ("app", found)
         _ask_choice(labels, "apps")
         return True
@@ -261,7 +263,7 @@ def open_folder(name):
         return True
     if len(found) > 1:
         labels = _folder_labels(found)
-        _menu("which one?", [f"{lab}   [{p}]" for lab, (_, p) in zip(labels, found)])
+        _menu(WHICH, [f"{lab}   [{p}]" for lab, (_, p) in zip(labels, found)])
         _pending = ("folder", found)
         _ask_choice(labels, "folders")
         return True
@@ -302,17 +304,16 @@ def show_in_folder(kind, folder_name=None):
         path = found[0][1] if found else None
     if not path:
         speak("Which folder?")
-        return True
+        return
     items = files.in_folder(path, kind)
     where = os.path.basename(path.rstrip("\\")) or path
     if not items:
         speak(f"There are no {kind} files in {where}.")
-        return True
+        return
     context.folder = path
     _menu(f"{kind} files in {path}", [name for name, _ in items[:LIST_LIMIT]])
     _pending = ("files", [(kind, n, p) for n, p in items])
     speak(f"{where} has {len(items)} {kind} files. Say a number to open one.")
-    return True
 
 
 INFO = [
@@ -370,54 +371,61 @@ def _ask_choice(labels, noun="matches"):
         speak(f"Did you mean {', '.join(labels[:-1])} or {labels[-1]}?")
 
 
-def _answer_pending(what, query):
-    global _pending
-    if what[0] == "confirm":
-        _, phrase, action = what
-        answer = gate._reply_kind(query)
-        if answer == "yes":
-            action()
-            speak(f"Okay, {phrase}.")
-            return True
-        if answer == "no":
-            speak("Okay, cancelled.")
-            return True
-        # Neither. Don't cancel — a misheard word is not a refusal. Returning False lets the
-        # rest of dispatch try to read it as a fresh command; if nothing does, the question
-        # is put back and asked again at the end of _dispatch.
-        return False
-
-    if what[0] == "app":
-        found = what[1]
-        chosen = _match_option(query, [d for d, _ in found])
-        if not chosen:
-            return False
-        return _launch(*next(f for f in found if f[0] == chosen))
-
-    if what[0] == "folder":
-        found = what[1]
-        labels = _folder_labels(found)
-        chosen = _match_option(query, labels)
-        if not chosen:
-            return False
-        return _open_folder_path(*found[labels.index(chosen)])
-
-    if what[0] == "files":
-        several = what[1]
-        chosen = _match_option(query, [n for _, n, _ in several])
-        if not chosen:
-            return False
-        return _open_path(*next(s for s in several if s[1] == chosen))
-
-    kind = what[1]
-    if what[0] == "pick":
-        return open_item(kind, query, exe=what[2])
-    if what[0] == "online":
-        if not query:
-            return False
-        web_search(query, ONLINE)
+def _answer_confirm(what, query):
+    _, phrase, action = what
+    answer = gate._reply_kind(query)
+    if answer == "yes":
+        action()
+        speak(f"Okay, {phrase}.")
         return True
+    if answer == "no":
+        speak("Okay, cancelled.")
+        return True
+    # Neither. Don't cancel — a misheard word is not a refusal. Returning False lets the
+    # rest of dispatch try to read it as a fresh command; if nothing does, the question
+    # is put back and asked again at the end of _dispatch.
+    return False
 
+
+def _answer_app(what, query):
+    found = what[1]
+    chosen = _match_option(query, [d for d, _ in found])
+    if not chosen:
+        return False
+    return _launch(*next(f for f in found if f[0] == chosen))
+
+
+def _answer_folder(what, query):
+    found = what[1]
+    labels = _folder_labels(found)
+    chosen = _match_option(query, labels)
+    if not chosen:
+        return False
+    return _open_folder_path(*found[labels.index(chosen)])
+
+
+def _answer_files(what, query):
+    several = what[1]
+    chosen = _match_option(query, [n for _, n, _ in several])
+    if not chosen:
+        return False
+    return _open_path(*next(s for s in several if s[1] == chosen))
+
+
+def _answer_pick(what, query):
+    return open_item(what[1], query, exe=what[2])
+
+
+def _answer_online(what, query):
+    if not query:
+        return False
+    web_search(query, ONLINE)
+    return True
+
+
+def _answer_source(what, query):
+    global _pending
+    kind = what[1]
     options = dict(sources_for(kind))
     chosen = _match_option(query, list(options))
     if not chosen:
@@ -430,131 +438,211 @@ def _answer_pending(what, query):
     return True
 
 
-def do(action, target):
-    """Run one resolved intent. True if it was handled."""
-    if action == "open_app":
-        return open_app(target)
-    if action == "open_folder":
-        return open_folder(target)
-    if action == "open_site" and target.lower() in SITES:
-        speak(f"Opening {target}.")
-        webbrowser.open(SITES[target.lower()])
+ANSWERS = {"confirm": _answer_confirm, "app": _answer_app, "folder": _answer_folder,
+           "files": _answer_files, "pick": _answer_pick, "online": _answer_online}
+
+
+def _answer_pending(what, query):
+    """Read the utterance as an answer to the question we asked. True if it was one."""
+    return ANSWERS.get(what[0], _answer_source)(what, query)
+
+
+def _do_site(target):
+    if target.lower() not in SITES:
+        return False
+    speak(f"Opening {target}.")
+    webbrowser.open(SITES[target.lower()])
+    return True
+
+
+def _do_web_search(target):
+    web_search(target)
+    return True
+
+
+def _do_windows_search(target):
+    system.windows_search(target)
+    speak(f"Searching Windows for {target}.")
+    return True
+
+
+def _do_library(target):
+    _browse(_kind(target.rsplit(" ", 1)[-1]) or "music")
+    return True
+
+
+def _do_type(target):
+    system.type_text(target)
+    speak(f"Typed {target}.")
+    return True
+
+
+def _do_volume(way):
+    def step(_target):
+        system.volume_step(way)
+        speak(f"Volume {way}.")
         return True
-    if action == "web_search":
-        web_search(target)
-        return True
-    if action == "windows_search":
-        system.windows_search(target)
-        speak(f"Searching Windows for {target}.")
-        return True
-    if action in ("play_media", "show_library"):
-        _browse(_kind(target.rsplit(" ", 1)[-1]) or "music")
-        return True
-    if action == "type_text":
-        system.type_text(target)
-        speak(f"Typed {target}.")
-        return True
-    if action in ("volume_up", "volume_down"):
-        system.volume_step("up" if action == "volume_up" else "down")
-        speak("Volume up." if action == "volume_up" else "Volume down.")
-        return True
-    if action == "mute":
-        system.mute()
-        speak("Muted.")
-        return True
-    if action == "media":
-        running = system.media_app_running()
-        if not running:
-            ask_source("music")
-            return True
-        system.media(target)
-        said = {"play_pause": "Toggled playback", "next": "Skipped to the next track",
-                "previous": "Went back a track", "stop": "Stopped playback"}[target]
-        speak(f"{said} on {running[0]}.")
-        return True
-    if action == "set_volume":
-        number = re.search(r"\d{1,3}", target)
-        if not number:
-            return False
-        speak(f"Volume set to {system.set_volume(number.group(0))} percent.")
-        return True
-    if action == "speech_speed":
-        now = voice.current()[3]
-        number = re.search(r"-?\d{1,3}", target)
-        step = int(number.group(0)) if number else SPEED_STEP
-        if number and not RELATIVE.search(target):
-            level = step
-        else:
-            level = now - step if SLOWER.search(target) else now + step
-        speak(f"Talking at {voice.set_speed(level)} percent now.")
-        return True
-    if action == "set_brightness":
-        number = re.search(r"\d{1,3}", target)
-        current = system.get_brightness()
-        if number:
-            level = int(number.group(0))
-        elif current is not None:
-            level = current - 20 if DOWN.search(target) else current + 20
-        else:
-            speak("This screen doesn't report its brightness, so I can't change it.")
-            return True
-        done = system.set_brightness(level)
-        speak(f"Brightness set to {done} percent." if done else "I couldn't change the brightness.")
-        return True
-    if action in ("wifi_on", "wifi_off"):
-        ok = system.wifi(action == "wifi_on")
-        state = "on" if action == "wifi_on" else "off"
+    return step
+
+
+def _do_mute(_target):
+    system.mute()
+    speak("Muted.")
+    return True
+
+
+def _do_media(target):
+    running = system.media_app_running()
+    if not running:
+        ask_source("music")
+        return None
+    system.media(target)
+    speak(f"{MEDIA_SAID[target]} on {running[0]}.")
+    return True
+
+
+def _do_set_volume(target):
+    number = re.search(r"\d{1,3}", target)
+    if not number:
+        return False
+    speak(f"Volume set to {system.set_volume(number.group(0))} percent.")
+    return True
+
+
+def _do_speech_speed(target):
+    now = voice.current()[3]
+    number = re.search(r"-?\d{1,3}", target)
+    step = int(number.group(0)) if number else SPEED_STEP
+    if number and not RELATIVE.search(target):
+        level = step
+    else:
+        level = now - step if SLOWER.search(target) else now + step
+    speak(f"Talking at {voice.set_speed(level)} percent now.")
+    return True
+
+
+def _do_brightness(target):
+    number = re.search(r"\d{1,3}", target)
+    current = system.get_brightness()
+    if number:
+        level = int(number.group(0))
+    elif current is not None:
+        level = current - 20 if DOWN.search(target) else current + 20
+    else:
+        speak("This screen doesn't report its brightness, so I can't change it.")
+        return None
+    done = system.set_brightness(level)
+    speak(f"Brightness set to {done} percent." if done else "I couldn't change the brightness.")
+    return True
+
+
+def _do_wifi(on):
+    def switch(_target):
+        ok = system.wifi(on)
+        state = "on" if on else "off"
         speak(f"Wi-Fi turned {state}." if ok else "I need administrator rights to change Wi-Fi.")
         return True
-    if action == "time":
-        now = datetime.datetime.now()
-        hour = now.hour % 12 or 12
-        minute = now.minute
-        if minute == 0:
-            time_str = f"{hour} o'clock"
-        elif minute < 10:
-            time_str = f"{hour} oh {minute}"
-        elif minute < 30:
-            time_str = f"{hour} {minute}"
-        elif minute == 30:
-            time_str = f"half past {hour}"
-        elif minute < 45:
-            time_str = f"{hour} {minute}"
-        else:
-            next_hour = (now.hour + 1) % 12 or 12
-            time_str = f"{60 - minute} to {next_hour}"
-        period = "in the morning" if now.hour < 12 else ("in the afternoon" if now.hour < 17 else "in the evening")
-        speak(f"The time is {time_str} {period}.")
-        return True
-    if action == "open_settings":
-        page = system.settings_page(target)
-        if page is None:
-            return False
-        system.open_settings(target)
-        speak(f"Opening {page.replace('-', ' ')} settings." if page else "Opening Settings.")
-        return True
-    if action == "shutdown":
-        return ask_confirm("shut it down", lambda: shell.shutdown(False))
-    if action == "restart":
-        return ask_confirm("restart it", lambda: shell.shutdown(True))
-    if action == "empty_recycle_bin":
-        return ask_confirm("empty the recycle bin", shell.empty_recycle_bin)
-    if action == "cancel_shutdown":
-        shell.cancel_shutdown()
-        speak("Cancelled the shutdown.")
-        return True
-    if action == "lock":
-        speak("Locking up.")
-        shell.lock()
-        return True
-    if action == "sleep":
-        speak("Going to sleep.")
-        shell.sleep()
-        return True
-    if action == "close_app":
-        _close(target)
-        return True
-    return False
+    return switch
+
+
+def _oclock(hour, minute):
+    """The hour and minute the way a person says them out loud."""
+    if minute == 0:
+        return f"{hour} o'clock"
+    if minute < 10:
+        return f"{hour} oh {minute}"
+    if minute == 30:
+        return f"half past {hour}"
+    if minute < 45:
+        return f"{hour} {minute}"
+    return f"{60 - minute} to {hour % 12 + 1}"
+
+
+def _part_of_day(hour):
+    if hour < 12:
+        return "in the morning"
+    if hour < 17:
+        return "in the afternoon"
+    return "in the evening"
+
+
+def _do_time(_target):
+    now = datetime.datetime.now()
+    speak(f"The time is {_oclock(now.hour % 12 or 12, now.minute)} {_part_of_day(now.hour)}.")
+    return True
+
+
+def _do_settings(target):
+    page = system.settings_page(target)
+    if page is None:
+        return False
+    system.open_settings(target)
+    speak(f"Opening {page.replace('-', ' ')} settings." if page else "Opening Settings.")
+    return True
+
+
+def _do_cancel_shutdown(_target):
+    shell.cancel_shutdown()
+    speak("Cancelled the shutdown.")
+    return True
+
+
+def _do_lock(_target):
+    speak("Locking up.")
+    shell.lock()
+    return True
+
+
+def _do_sleep(_target):
+    speak("Going to sleep.")
+    shell.sleep()
+    return True
+
+
+def _do_close(target):
+    _close(target)
+    return True
+
+
+MEDIA_SAID = {"play_pause": "Toggled playback", "next": "Skipped to the next track",
+              "previous": "Went back a track", "stop": "Stopped playback"}
+ACTIONS = {
+    "open_app": open_app,
+    "open_folder": open_folder,
+    "open_site": _do_site,
+    "web_search": _do_web_search,
+    "windows_search": _do_windows_search,
+    "play_media": _do_library,
+    "show_library": _do_library,
+    "type_text": _do_type,
+    "volume_up": _do_volume("up"),
+    "volume_down": _do_volume("down"),
+    "mute": _do_mute,
+    "media": _do_media,
+    "set_volume": _do_set_volume,
+    "speech_speed": _do_speech_speed,
+    "set_brightness": _do_brightness,
+    "wifi_on": _do_wifi(True),
+    "wifi_off": _do_wifi(False),
+    "time": _do_time,
+    "open_settings": _do_settings,
+    "shutdown": lambda _t: ask_confirm("shut it down", lambda: shell.shutdown(False)),
+    "restart": lambda _t: ask_confirm("restart it", lambda: shell.shutdown(True)),
+    "empty_recycle_bin": lambda _t: ask_confirm("empty the recycle bin", shell.empty_recycle_bin),
+    "cancel_shutdown": _do_cancel_shutdown,
+    "lock": _do_lock,
+    "sleep": _do_sleep,
+    "close_app": _do_close,
+}
+
+
+def do(action, target):
+    """Run one resolved intent. True if it was handled."""
+    run = ACTIONS.get(action)
+    if run is None:
+        return False
+    # False means the input did not match; None is a handled command with no result to return.
+    return run(target) is not False
 
 
 # "can you please just open notepad for me" -> "open notepad": every fullmatch below
@@ -578,7 +666,7 @@ def _bare(query):
     return TRAILING.sub("", POLITE.sub("", query)).strip(STRIP) or query
 
 
-SPLIT_RE = re.compile(r"\s+(?:and then|and also|then|and)\s+")
+SPLIT_RE = re.compile(r"\s(?:and then|and also|then|and)\s+")
 VERBS = ("open", "show", "play", "search", "google", "find", "type", "write", "set",
          "turn", "go to", "list", "close", "pause", "next", "previous", "stop",
          "mute", "volume", "brightness", "launch", "start")
@@ -595,15 +683,15 @@ def _for_the_agent(query):
 
     The fast path matches keywords, not meaning. "What is the volume of a sphere" contains the
     word volume, so it turned the volume up; "why is screen brightness bad for eyes" changed
-    the brightness. Questions and long multi-part sentences are precisely where keyword
-    matching guesses wrong, and precisely where a second of real thinking costs nothing.
+    the brightness. Questions need the agent first so a keyword cannot be mistaken for an
+    instruction. Imperatives get one local attempt; unknown ones still reach the agent.
 
     Short imperatives — "volume up", "open notepad", "pause" — stay on the instant path.
     """
     bare = _bare(query)
     if RECALL.match(bare):
         return False  # these are answered from the instant path's own memory, not the agent
-    return bool(QUESTION.match(bare)) or len(bare.split()) > FAST_WORDS
+    return bool(QUESTION.match(bare))
 
 
 def _split_compound(query):
@@ -636,7 +724,11 @@ def handle(query):
         if result == "command" and ASK_WHAT_NEXT and _pending is None:
             _next()
         return result is not False
+    return _run_parts(parts, query)
 
+
+def _run_parts(parts, query):
+    """Run a compound sentence part by part, handing the rest to the agent."""
     done, failed = [], []
     for part in parts:
         result = _dispatch(part, allow_chat=False)
@@ -656,49 +748,75 @@ def handle(query):
     return True
 
 
+STEP = re.compile(
+    r"(?:play|open|go\s+to)?\s*(?:the\s+)?(next|previous|last)\s*(?:one|song|video|track)?")
+CLOSE = re.compile(r"close\b(.*)")
+WHAT_IS_IT = re.compile(r"what(?:'s| is| was)\s+(?:that|it|this|playing)"
+                        r"|what did (?:you play|i search(?: for)?)")
+PLAY_IT = re.compile(r"(?:play|resume|open)\s*(?:it|that|this|the\s+same|again)?")
+
+
+def _up_next(query):
+    step = STEP.fullmatch(query)
+    if not (step and context.results):
+        return None
+    if not play_step(1 if step.group(1) == "next" else -1):
+        speak("That's the end of the list.")
+    return "command"
+
+
+def _close_it(query):
+    m = CLOSE.fullmatch(query)
+    return _close(m.group(1).strip(STRIP)) if m else None
+
+
+def _last_thing():
+    """What the instant path remembers doing most recently."""
+    current = context.current()
+    if current:
+        return f"That's {current[0][:70]}."
+    if context.query:
+        return f"You last searched for {context.query}."
+    if context.file:
+        return f"The last thing I opened was {os.path.basename(context.file)}."
+    if context.app:
+        return f"The last thing I opened was {context.app}."
+    return "Nothing yet."
+
+
+def _what_was_that(query):
+    if not WHAT_IS_IT.fullmatch(query):
+        return None
+    speak(_last_thing())
+    return "command"
+
+
+def _play_it_again(query):
+    if not PLAY_IT.fullmatch(query):
+        return None
+    current = context.current()
+    if current:
+        speak(f"Playing {current[0][:70]}.")
+        online.play(current[1])
+    elif context.results:
+        play_step(1)
+    elif context.file:
+        speak(f"Opening {os.path.basename(context.file)} again.")
+        files.open_file(context.file)
+    else:
+        speak("Play what? Nothing's queued.")
+    return "command"
+
+
+FOLLOW_UPS = (_up_next, _close_it, _what_was_that, _play_it_again)
+
+
 def _follow_up(query):
     """Resolve 'next one', 'play it' and friends against what we just did."""
-    step = re.fullmatch(
-        r"(?:play|open|go\s+to)?\s*(?:the\s+)?(next|previous|last)\s*(?:one|song|video|track)?",
-        query)
-    if step and context.results:
-        if play_step(1 if step.group(1) == "next" else -1):
-            return "command"
-        speak("That's the end of the list.")
-        return "command"
-
-    m = re.fullmatch(r"close\b\s*(.*)", query)
-    if m:
-        return _close(m.group(1).strip(STRIP))
-
-    if re.fullmatch(r"what(?:'s| is| was)\s+(?:that|it|this|playing)"
-                    r"|what did (?:you play|i search(?: for)?)", query):
-        current = context.current()
-        if current:
-            speak(f"That's {current[0][:70]}.")
-        elif context.query:
-            speak(f"You last searched for {context.query}.")
-        elif context.file:
-            speak(f"The last thing I opened was {os.path.basename(context.file)}.")
-        elif context.app:
-            speak(f"The last thing I opened was {context.app}.")
-        else:
-            speak("Nothing yet.")
-        return "command"
-
-    if re.fullmatch(r"(?:play|resume|open)\s*(?:it|that|this|the\s+same|again)?", query):
-        current = context.current()
-        if current:
-            speak(f"Playing {current[0][:70]}.")
-            online.play(current[1])
-        elif context.results:
-            play_step(1)
-        elif context.file:
-            speak(f"Opening {os.path.basename(context.file)} again.")
-            files.open_file(context.file)
-        else:
-            speak("Play what? Nothing's queued.")
-        return "command"
+    for check in FOLLOW_UPS:
+        resolved = check(query)
+        if resolved:
+            return resolved
     return None
 
 
@@ -745,16 +863,308 @@ def _close(name):
     return "command"
 
 
+QUIT = re.compile(r"(?:" + NAME + r"[ ,]*)?(?:quit|exit|goodbye|bye)")
+FRESH = re.compile(r"(?:start over|new task|forget (?:it|that|everything))")
+TYPE = re.compile(r"(?:type|write)\s+(.+)")
+TYPE_SPOKEN = re.compile(r"(?:type|write)\s+(.+)", re.I)
+SHOW = re.compile(r"show\s+(?:me\s+)?(?:the\s+|all\s+)?(\w+)"
+                  r"(?:\s+(?:in|from|inside)\s+(?:my\s+|the\s+)?([\w ]+?)(?:\s+folder)?)?$")
+IN_WINDOWS = re.compile(r"(?:search|find)\s+(?:for\s+)?(\S+(?:\s+\S+)*?)\s+(?:in|on)\s+windows$")
+NAMED_FOLDER = re.compile(r"(?:open|go to)\s+(?:my\s+|the\s+)?(\w+(?:\s+\w+)*?)\s+folder")
+FILE_SEARCH = re.compile(
+    r"(?:search|find|look for)\s+(?:my\s+|the\s+)?(?:files?|notes|documents?|laptop|computer|pc)"
+    r"\s+(?:for|that (?:has|have|mentions?|contains?|says?|includes?))\s+(.+)")
+DIR_NAMED = re.compile(
+    r"(?:open|go to)\s+(?:the\s+)?(?:directory|folder|path)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)")
+DIR_PATH = re.compile(r"(?:open|go to)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)$")
+DRIVES = re.compile(r"(?:what\s+)?drives?\s+(?:do i have|do you have|are there|list)?")
+LIST_DRIVES = re.compile(r"list\s+(?:the\s+)?drives?")
+FILE_INFO = re.compile(r"(?:how\s+big\s+is|what\s+size\s+is|when\s+was|where\s+is|info\s+on|"
+                       r"size\s+of)\s+(?:the\s+)?(.+)")
+MUTE = re.compile(r"(?:mute|unmute)(?:\s+(?:the\s+)?(?:sound|volume|audio))?")
+VOLUME = re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsofter\b")
+DIGIT = re.compile(r"\d")
+WIFI = re.compile(r"(?:turn\s+)?(?:(on|off)\s+)?(?:the\s+)?wi-?fi(?:\s+(on|off))?")
+MEDIA = re.compile(r"(?:media\s+)?(pause|resume|next|skip|previous|back|stop)"
+                   r"(?:\s+(?:the\s+)?(?:song|track|video|music))?")
+CANCEL = re.compile(r"cancel (?:the )?(?:shutdown|restart)|(?:don't|do not) shut ?down")
+RECYCLE = re.compile(r"empty (?:the )?(?:recycle bin|trash)")
+PING = re.compile(r"ping\s+([\w.:-]+)")
+PLAY = re.compile(r"(?:play|put on)\s+(?:the\s+)?(\S+(?:\s+\S+)*?)(?:\s+on\s+youtube)?$")
+SEARCH_FOR = re.compile(r"(?:search|google|look up|find)\s+(?:for\s+)?(.+)")
+ON_SITE = re.compile(r"\s(?:on|in)\s+(\w+)$")
+SETTINGS = re.compile(r"\bsettings?\b|\boptions?\b")
+OPEN = re.compile(r"(?:open|launch|start)\s+(?:my\s+|the\s+)?(.+)")
+APP_SUFFIX = re.compile(r"\s(?:app|application|file)$")
+
+
+def _step_site(query, _spoken):
+    site = next((s for s in SITES if f"open {s}" in query), None)
+    if not site:
+        return None
+    speak(f"Opening {site}.")
+    webbrowser.open(SITES[site])
+    return "command"
+
+
+def _step_time(query, _spoken):
+    if "the time" not in query:
+        return None
+    do("time", "")
+    return "command"
+
+
+def _step_ai(query, _spoken):
+    if "using artificial intelligence" not in query:
+        return None
+    ai(query)
+    return "command"
+
+
+def _step_reset_chat(query, _spoken):
+    if "reset chat" not in query:
+        return None
+    agent.reset()
+    speak("Chat history reset.")
+    return "command"
+
+
+def _step_type(query, spoken):
+    m = TYPE.match(query)
+    if not m or COMPOSE.search(m.group(1).strip(STRIP)):
+        return None
+    # type what was actually said, politeness and all — it's literal text
+    exact = TYPE_SPOKEN.search(spoken)
+    do("type_text", (exact or m).group(1).strip(STRIP))
+    return "command"
+
+
+def _step_show(query, _spoken):
+    m = SHOW.match(query)
+    kind = _kind(m.group(1)) if m else None
+    if not kind:
+        return None
+    show_in_folder(kind, m.group(2))
+    return "command"
+
+
+def _step_windows_search(query, _spoken):
+    m = IN_WINDOWS.match(query)
+    if not m:
+        return None
+    do("windows_search", m.group(1).strip(STRIP))
+    return "command"
+
+
+def _step_folder(query, _spoken):
+    m = NAMED_FOLDER.match(query)
+    if not m:
+        return None
+    do("open_folder", m.group(1))
+    return "command"
+
+
+def _step_file_search(query, _spoken):
+    """Offline content search — "search my files for X", "find the file that mentions X"."""
+    m = FILE_SEARCH.match(query)
+    text = m.group(1).strip(STRIP) if m else ""
+    if not text:
+        return None
+    from mcp_tool.pc import search_file_contents
+    result = search_file_contents(text)
+    speak(result[:400] if len(result) > 400 else result)
+    return "command"
+
+
+def _step_directory(query, _spoken):
+    """A directory by path — "open D:/Codes", "open the directory C:/Users/me"."""
+    m = DIR_NAMED.match(query) or DIR_PATH.match(query)
+    if not m:
+        return None
+    from mcp_tool.pc import open_directory
+    speak(open_directory(m.group(1)))
+    return "command"
+
+
+def _step_drives(query, _spoken):
+    if not (DRIVES.fullmatch(query) or LIST_DRIVES.fullmatch(query)):
+        return None
+    from mcp_tool.pc import list_drives
+    speak(list_drives())
+    return "command"
+
+
+def _step_file_info(query, _spoken):
+    """"how big is X", "when was X modified", "where is X"."""
+    m = FILE_INFO.match(query)
+    if not m:
+        return None
+    from mcp_tool.pc import file_info
+    speak(file_info(m.group(1).strip(STRIP)))
+    return "command"
+
+
+def _step_mute(query, _spoken):
+    if not MUTE.fullmatch(query):
+        return None
+    do("mute", "")
+    return "command"
+
+
+def _step_volume(query, _spoken):
+    if not VOLUME.search(query):
+        return None
+    if DIGIT.search(query):
+        do("set_volume", query)
+    else:
+        do("volume_down" if DOWN.search(query) else "volume_up", "")
+    return "command"
+
+
+def _step_talk_speed(query, _spoken):
+    if not TALK.search(query):
+        return None
+    do("speech_speed", query)
+    return "command"
+
+
+def _step_brightness(query, _spoken):
+    if not BRIGHT.search(query):
+        return None
+    do("set_brightness", query)
+    return "command"
+
+
+def _step_wifi(query, _spoken):
+    m = WIFI.fullmatch(query)
+    state = (m.group(1) or m.group(2)) if m else None
+    if not state:
+        return None
+    do("wifi_on" if state == "on" else "wifi_off", "")
+    return "command"
+
+
+def _step_media(query, _spoken):
+    word = MEDIA.fullmatch(query)
+    if not (word and do("media", MEDIA_WORDS[word.group(1)])):
+        return None
+    return "command"
+
+
+def _step_cancel_shutdown(query, _spoken):
+    if not CANCEL.fullmatch(query):
+        return None
+    do("cancel_shutdown", "")
+    return "command"
+
+
+def _step_power(query, _spoken):
+    action = next((a for p, a in POWER if re.fullmatch(f"(?:{p}){THIS_PC}", query)), None)
+    if not action:
+        return None
+    do(action, "")
+    return "command"
+
+
+def _step_recycle_bin(query, _spoken):
+    if not RECYCLE.search(query):
+        return None
+    do("empty_recycle_bin", "")
+    return "command"
+
+
+def _step_ping(query, _spoken):
+    m = PING.fullmatch(query)
+    if not m:
+        return None
+    speak(shell.ping(m.group(1)) or f"Couldn't reach {m.group(1)}.")
+    return "command"
+
+
+def _step_system_info(query, _spoken):
+    said = system_info(query)
+    if not said:
+        return None
+    speak(said)
+    return "command"
+
+
+def _step_kind(query, _spoken):
+    kind = _kind_asked_for(query)
+    if not kind:
+        return None
+    _browse(kind)
+    return "command"
+
+
+def _step_play(query, _spoken):
+    m = PLAY.match(query)
+    if not m:
+        return None
+    play_online(m.group(1).strip(STRIP))
+    return "command"
+
+
+def _step_search(query, _spoken):
+    # only an explicitly named destination takes the instant path. A bare "search for X" or
+    # "find X" goes to the agent instead, which can actually read the web and answer, or
+    # look for a file — opening a results page was never what was being asked for.
+    m = SEARCH_FOR.match(query)
+    if not m:
+        return None
+    text = m.group(1).strip(STRIP)
+    on = ON_SITE.search(text)
+    site = on.group(1) if on and on.group(1) in SEARCH else None
+    if not text or not (site or query.startswith("google")):
+        return None
+    if site:
+        text = text[: on.start()].strip(STRIP)
+    if not text:
+        return None
+    play_online(text) if site == ONLINE else web_search(text, site or "google")
+    return "command"
+
+
+def _step_settings(query, _spoken):
+    return "command" if SETTINGS.search(query) and do("open_settings", query) else None
+
+
+def _step_open(query, _spoken):
+    m = OPEN.match(query)
+    if not m:
+        return None
+    name = APP_SUFFIX.sub("", m.group(1).strip(STRIP)).rstrip()
+    return "command" if open_app(name) or open_any_file(name) else None
+
+
+STEPS = (_step_site, _step_time, _step_ai, _step_reset_chat, _step_type, _step_show,
+         _step_windows_search, _step_folder, _step_file_search, _step_directory,
+         _step_drives, _step_file_info, _step_mute, _step_volume, _step_talk_speed,
+         _step_brightness, _step_wifi, _step_media, _step_cancel_shutdown, _step_power,
+         _step_recycle_bin, _step_ping, _step_system_info, _step_kind, _step_play,
+         _step_search, _step_settings, _step_open)
+
+
+def _reask(unanswered):
+    global _pending
+    _pending = unanswered  # keep the question alive — this really did look like an answer
+    if unanswered[0] == "confirm":
+        speak(f"Sorry, I didn't catch that. Should I {unanswered[1]}? Say yes or no.")
+    else:
+        speak("Sorry, which one did you mean?")
+    return "command"
+
+
 def _dispatch(query, allow_chat=True):
     global _pending
     spoken = query.strip(STRIP)
     query = _bare(spoken)
 
-    if re.fullmatch(r"(?:" + NAME + r"[ ,]*)?(?:quit|exit|goodbye|bye)", query):
+    if QUIT.fullmatch(query):
         speak("See you later!")
         return False
 
-    if re.fullmatch(r"(?:start over|new task|forget (?:it|that|everything))", query):
+    if FRESH.fullmatch(query):
         context.clear()
         agent.reset()
         speak("Starting fresh.")
@@ -770,169 +1180,16 @@ def _dispatch(query, allow_chat=True):
         if _answer_pending(unanswered, query):
             return "command"
 
-    site = next((s for s in SITES if f"open {s}" in query), None)
-    if site:
-        speak(f"Opening {site}.")
-        webbrowser.open(SITES[site])
-        return "command"
-    if "the time" in query:
-        do("time", "")
-        return "command"
-    if "using artificial intelligence" in query:
-        ai(query)
-        return "command"
-    if "reset chat" in query:
-        agent.reset()
-        speak("Chat history reset.")
-        return "command"
-
-    m = re.match(r"(?:type|write)\s+(.+)", query)
-    if m and not COMPOSE.search(m.group(1).strip(STRIP)):
-        # type what was actually said, politeness and all — it's literal text
-        exact = re.search(r"(?:type|write)\s+(.+)", spoken, re.I)
-        do("type_text", (exact or m).group(1).strip(STRIP))
-        return "command"
-    m = re.match(r"show\s+(?:me\s+)?(?:the\s+|all\s+)?(\w+)"
-                 r"(?:\s+(?:in|from|inside)\s+(?:my\s+|the\s+)?([\w ]+?)(?:\s+folder)?)?$", query)
-    if m:
-        kind = _kind(m.group(1))
-        if kind:
-            return "command" if show_in_folder(kind, m.group(2)) else "unhandled"
-
-    m = re.match(r"(?:search|find)\s+(?:for\s+)?(.+?)\s+(?:in|on)\s+windows$", query)
-    if m:
-        do("windows_search", m.group(1).strip(STRIP))
-        return "command"
-    m = re.match(r"(?:open|go to)\s+(?:my\s+|the\s+)?([\w ]+?)\s+folder", query)
-    if m:
-        do("open_folder", m.group(1))
-        return "command"
-    # offline content search — "search my files for X", "find the file that mentions X"
-    m = re.match(r"(?:search|find|look for)\s+(?:my\s+|the\s+)?(?:files?|notes|documents?|laptop|computer|pc)"
-                 r"\s+(?:for|that (?:has|have|mentions?|contains?|says?|includes?))\s+(.+)", query)
-    if m:
-        text = m.group(1).strip(STRIP)
-        if text:
-            from mcp_tool.pc import search_file_contents
-            result = search_file_contents(text)
-            speak(result[:400] if len(result) > 400 else result)
-            return "command"
-    # open a directory by path — "open D:/Codes", "open the directory C:/Users/me"
-    m = re.match(r"(?:open|go to)\s+(?:the\s+)?(?:directory|folder|path)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)", query)
-    if m:
-        from mcp_tool.pc import open_directory
-        result = open_directory(m.group(1))
-        speak(result)
-        return "command"
-    m = re.match(r"(?:open|go to)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)$", query)
-    if m:
-        from mcp_tool.pc import open_directory
-        result = open_directory(m.group(1))
-        speak(result)
-        return "command"
-    # list drives — "what drives do I have", "list drives"
-    if re.fullmatch(r"(?:what\s+)?drives?\s+(?:do\s+(?:i|you)\s+have|are\s+there|list)?", query) \
-            or re.fullmatch(r"list\s+(?:the\s+)?drives?", query):
-        from mcp_tool.pc import list_drives
-        speak(list_drives())
-        return "command"
-    # file info — "how big is X", "when was X modified", "where is X"
-    m = re.match(r"(?:(?:how\s+big\s+is|what\s+size\s+is|when\s+was|where\s+is|info\s+on|"
-                 r"size\s+of)\s+(?:the\s+)?(.+))", query)
-    if m:
-        from mcp_tool.pc import file_info
-        result = file_info(m.group(1).strip(STRIP))
-        speak(result)
-        return "command"
-    if re.fullmatch(r"(?:mute|unmute)(?:\s+(?:the\s+)?(?:sound|volume|audio))?", query):
-        do("mute", "")
-        return "command"
-    if re.search(r"\bvolume\b|\blouder\b|\bquieter\b|\bsofter\b", query):
-        if re.search(r"\d", query):
-            do("set_volume", query)
-        else:
-            do("volume_down" if DOWN.search(query) else "volume_up", "")
-        return "command"
-    if TALK.search(query):
-        do("speech_speed", query)
-        return "command"
-    if BRIGHT.search(query):
-        do("set_brightness", query)
-        return "command"
-    m = re.fullmatch(r"(?:turn\s+)?(?:(on|off)\s+)?(?:the\s+)?wi-?fi(?:\s+(on|off))?", query)
-    if m and (m.group(1) or m.group(2)):
-        do("wifi_on" if (m.group(1) or m.group(2)) == "on" else "wifi_off", "")
-        return "command"
-
-    word = re.fullmatch(r"(?:media\s+)?(pause|resume|next|skip|previous|back|stop)"
-                        r"(?:\s+(?:the\s+)?(?:song|track|video|music))?", query)
-    if word and do("media", MEDIA_WORDS[word.group(1)]):
-        return "command"
-
-    if re.fullmatch(r"cancel (?:the )?(?:shutdown|restart)|(?:don't|do not) shut ?down", query):
-        do("cancel_shutdown", "")
-        return "command"
-    action = next((a for p, a in POWER if re.fullmatch(f"(?:{p}){THIS_PC}", query)), None)
-    if action:
-        do(action, "")
-        return "command"
-    if re.search(r"empty (?:the )?(?:recycle bin|trash)", query):
-        do("empty_recycle_bin", "")
-        return "command"
-    m = re.fullmatch(r"ping\s+([\w.:-]+)", query)
-    if m:
-        speak(shell.ping(m.group(1)) or f"Couldn't reach {m.group(1)}.")
-        return "command"
-
-    said = system_info(query)
-    if said:
-        speak(said)
-        return "command"
-
-    kind = _kind_asked_for(query)
-    if kind:
-        _browse(kind)
-        return "command"
-
-    m = re.match(r"(?:play|put on)\s+(?:the\s+)?(.+?)(?:\s+on\s+youtube)?$", query)
-    if m:
-        play_online(m.group(1).strip(STRIP))
-        return "command"
-
-    # only an explicitly named destination takes the instant path. A bare "search for X" or
-    # "find X" goes to the agent instead, which can actually read the web and answer, or
-    # look for a file — opening a results page was never what was being asked for.
-    m = re.match(r"(?:search|google|look up|find)\s+(?:for\s+)?(.+)", query)
-    if m:
-        text = m.group(1).strip(STRIP)
-        on = re.search(r"\s+(?:on|in)\s+(\w+)$", text)
-        site = on.group(1) if on and on.group(1) in SEARCH else None
-        if text and (site or query.startswith("google")):
-            if site:
-                text = text[: on.start()].strip(STRIP)
-            if text:
-                play_online(text) if site == ONLINE else web_search(text, site or "google")
-                return "command"
-
-    if re.search(r"\bsettings?\b|\boptions?\b", query) and do("open_settings", query):
-        return "command"
-
-    m = re.match(r"(?:open|launch|start)\s+(?:my\s+|the\s+)?(.+)", query)
-    if m:
-        name = re.sub(r"\s+(?:app|application|file)$", "", m.group(1).strip(STRIP))
-        if open_app(name) or open_any_file(name):
-            return "command"
+    for step in STEPS:
+        resolved = step(query, spoken)
+        if resolved:
+            return resolved
 
     # A fresh order abandons an unanswered menu. Without this a menu nobody wanted to answer
     # sat there swallowing every following command with "which one did you mean?", and the
     # only way out was to answer a question the user had already moved on from.
     if unanswered is not None and not query.startswith(VERBS) and not QUESTION.match(query):
-        _pending = unanswered  # keep the question alive — this really did look like an answer
-        if unanswered[0] == "confirm":
-            speak(f"Sorry, I didn't catch that. Should I {unanswered[1]}? Say yes or no.")
-        else:
-            speak("Sorry, which one did you mean?")
-        return "command"
+        return _reask(unanswered)
 
     if not allow_chat:
         return "unhandled"

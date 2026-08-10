@@ -11,6 +11,7 @@ import re
 import urllib.parse
 import webbrowser
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 import requests
 
@@ -18,8 +19,12 @@ from core import context, online
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
            "Accept-Language": "en-US,en"}
-TAG = re.compile(r"<[^>]+>")
-DROP = re.compile(r"<(script|style|nav|header|footer)\b.*?</\1>", re.S | re.I)
+# One connection pool shared by every call in this module — DNS lookup and the TLS
+# handshake happen once per process instead of once per tool call, which shortens every
+# chained web turn (search then read, weather, news, rates).
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
+
 SITES = {"google": "https://www.google.com/search?q={}",
          "youtube": "https://www.youtube.com/results?search_query={}",
          "wikipedia": "https://en.wikipedia.org/w/index.php?search={}",
@@ -28,8 +33,65 @@ SITES = {"google": "https://www.google.com/search?q={}",
          "github": "https://github.com/search?q={}"}
 
 
+class _TextParser(HTMLParser):
+    """Extract readable text without regexes that can backtrack on malformed HTML."""
+
+    _DROPPED = {"script", "style", "nav", "header", "footer"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.dropped = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in self._DROPPED:
+            self.dropped += 1
+
+    def handle_endtag(self, tag):
+        if tag.lower() in self._DROPPED and self.dropped:
+            self.dropped -= 1
+
+    def handle_data(self, data):
+        if not self.dropped:
+            self.parts.append(data)
+
+
+class _SearchResultsParser(HTMLParser):
+    """Read DuckDuckGo result links and snippets without matching HTML with regex."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links, self.snippets = [], []
+        self.kind, self.end_tag, self.href, self.parts = None, "", "", []
+
+    def handle_starttag(self, tag, attrs):
+        if self.kind:
+            return
+        attributes = dict(attrs)
+        classes = attributes.get("class", "")
+        if "result__a" in classes:
+            self.kind, self.end_tag, self.href, self.parts = "link", tag, attributes.get("href", ""), []
+        elif "result__snippet" in classes:
+            self.kind, self.end_tag, self.href, self.parts = "snippet", tag, "", []
+
+    def handle_data(self, data):
+        if self.kind:
+            self.parts.append(data)
+
+    def handle_endtag(self, tag):
+        if self.kind and tag == self.end_tag:
+            text = " ".join(" ".join(self.parts).split())
+            if self.kind == "link":
+                self.links.append((self.href, text))
+            else:
+                self.snippets.append(text)
+            self.kind = None
+
+
 def _text(chunk):
-    return " ".join(html.unescape(TAG.sub(" ", chunk)).split())
+    parser = _TextParser()
+    parser.feed(chunk)
+    parser.close()
+    return " ".join(html.unescape(" ".join(parser.parts)).split())
 
 
 def _real_url(href):
@@ -49,14 +111,15 @@ def web_search(query, count=5):
     news, current events, prices, scores, releases, or any fact you are not certain of.
     Answer from the results — do not guess. query: the search terms. count: how many results."""
     try:
-        page = requests.post("https://html.duckduckgo.com/html/", data={"q": query},
+        page = SESSION.post("https://html.duckduckgo.com/html/", data={"q": query},
                              headers=HEADERS, timeout=20).text
     except requests.RequestException as e:
         return f"The search didn't go through: {e}"
-    links = re.findall(r'result__a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page, re.S)
-    snippets = re.findall(r'result__snippet[^>]*>(.*?)</a>', page, re.S)
-    kept = [(url, _text(title), _text(snippets[i]) if i < len(snippets) else "")
-            for i, (href, title) in enumerate(links)
+    parser = _SearchResultsParser()
+    parser.feed(page)
+    parser.close()
+    kept = [(url, _text(title), _text(parser.snippets[i]) if i < len(parser.snippets) else "")
+            for i, (href, title) in enumerate(parser.links)
             if not _ADVERT.search(url := _real_url(href))]
     if not kept:
         return (f"Nothing but adverts came back for {query}. Say that you couldn't find a real "
@@ -71,10 +134,10 @@ def read_web_page(url, limit=4000):
     """Fetch one web page and return its readable text. Use after web_search when a result
     looks right but the snippet is too short to answer properly."""
     try:
-        page = requests.get(url, headers=HEADERS, timeout=20).text
+        page = SESSION.get(url, headers=HEADERS, timeout=20).text
     except requests.RequestException as e:
         return f"Couldn't open that page: {e}"
-    body = _text(DROP.sub(" ", page))
+    body = _text(page)
     return body[:int(limit)] or "That page had no readable text."
 
 
@@ -125,7 +188,7 @@ WIKI_HEADERS = {"User-Agent": "Wilco/1.0 (personal voice assistant)",
 def _wiki_search(query, limit=5):
     """Article titles matching free text. This is what lets a spoken question find a page."""
     try:
-        data = requests.get(WIKI_API, headers=WIKI_HEADERS, timeout=20, params={
+        data = SESSION.get(WIKI_API, headers=WIKI_HEADERS, timeout=20, params={
             "action": "query", "list": "search", "srsearch": query,
             "srlimit": limit, "format": "json"}).json()
     except (requests.RequestException, ValueError):
@@ -137,7 +200,7 @@ def _wiki_page(title):
     """The REST summary blob for an exact title, or None."""
     url = WIKI_REST + urllib.parse.quote(title.strip().replace(" ", "_"), safe="")
     try:
-        reply = requests.get(url, headers=WIKI_HEADERS, timeout=20)
+        reply = SESSION.get(url, headers=WIKI_HEADERS, timeout=20)
     except requests.RequestException:
         return None
     if reply.status_code != 200:
@@ -184,7 +247,7 @@ def wikipedia_article(topic, section="", limit=3000):
     Summarise what comes back in your own words; never read it out verbatim."""
     topic = topic.strip()
     try:
-        data = requests.get(WIKI_API, headers=WIKI_HEADERS, timeout=25, params={
+        data = SESSION.get(WIKI_API, headers=WIKI_HEADERS, timeout=25, params={
             "action": "query", "prop": "extracts", "explaintext": 1,
             "exsectionformat": "wiki", "titles": topic, "redirects": 1,
             "format": "json"}).json()
@@ -200,8 +263,8 @@ def wikipedia_article(topic, section="", limit=3000):
         return f"No exact article for {topic}. Closest: {', '.join(titles[:4])}. Ask which."
 
     # "== History ==" markers split the article; the first chunk is the untitled opening
-    chunks = re.split(r"\n==\s*([^=]+?)\s*==\n", "\n" + text)
-    opening, headings = chunks[0].strip(), chunks[1::2]
+    chunks = re.split(r"\n==([^=]+)==\n", "\n" + text)
+    opening, headings = chunks[0].strip(), [h.strip() for h in chunks[1::2]]
     if section.strip():
         wanted = section.strip().lower()
         for name, body in zip(headings, chunks[2::2]):
@@ -220,7 +283,7 @@ def weather(city="", when="now"):
     place = city.strip() or ""
     url = f"https://wttr.in/{urllib.parse.quote(place)}?format=j1"
     try:
-        data = requests.get(url, headers=HEADERS, timeout=25).json()
+        data = SESSION.get(url, headers=HEADERS, timeout=25).json()
     except (requests.RequestException, ValueError) as e:
         return f"Couldn't get the weather: {e}"
     now = data["current_condition"][0]
@@ -247,7 +310,7 @@ def news_headlines(topic="", count=6):
     else:
         url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
     try:
-        raw = requests.get(url, headers=HEADERS, timeout=20).content
+        raw = SESSION.get(url, headers=HEADERS, timeout=20).content
         items = ET.fromstring(raw).findall(".//item")
     except (requests.RequestException, ET.ParseError) as e:
         return f"Couldn't fetch the news: {e}"
@@ -268,7 +331,7 @@ def define(word):
     mean', 'define X', 'how do you spell X'. Give the plain sense first, not every entry."""
     url = "https://api.dictionaryapi.dev/api/v2/entries/en/" + urllib.parse.quote(word.strip())
     try:
-        reply = requests.get(url, headers=HEADERS, timeout=20)
+        reply = SESSION.get(url, headers=HEADERS, timeout=20)
     except requests.RequestException as e:
         return f"Couldn't reach the dictionary: {e}"
     if reply.status_code == 404:
@@ -297,7 +360,7 @@ def convert_currency(amount, source, target):
     except ValueError:
         return f"{amount} isn't a number I can convert."
     try:
-        data = requests.get(f"https://open.er-api.com/v6/latest/{source}",
+        data = SESSION.get(f"https://open.er-api.com/v6/latest/{source}",
                             headers=HEADERS, timeout=20).json()
     except (requests.RequestException, ValueError) as e:
         return f"Couldn't get exchange rates: {e}"
@@ -316,7 +379,7 @@ def crypto_price(coin="bitcoin", currency="inr"):
     a price on its own says little."""
     coin, currency = coin.strip().lower().replace(" ", "-"), currency.strip().lower()
     try:
-        data = requests.get("https://api.coingecko.com/api/v3/simple/price",
+        data = SESSION.get("https://api.coingecko.com/api/v3/simple/price",
                             headers=HEADERS, timeout=20,
                             params={"ids": coin, "vs_currencies": currency,
                                     "include_24hr_change": "true"}).json()
@@ -329,13 +392,18 @@ def crypto_price(coin="bitcoin", currency="inr"):
     if price is None:
         return f"No {currency.upper()} price for {coin}."
     change = data[coin].get(f"{currency}_24h_change")
-    moved = f", {'up' if change >= 0 else 'down'} {abs(change):.1f}% today" if change else ""
+    moved = ""
+    if change:
+        direction = "up" if change >= 0 else "down"
+        moved = f", {direction} {abs(change):.1f}% today"
     return f"{coin.replace('-', ' ').title()} is {price:,.2f} {currency.upper()}{moved}."
+
+
+_SCHEME = re.compile(r"^https?://")
 
 
 def open_website(url):
     """Open a URL in the default browser. url: a full address, or a bare domain like bbc.com."""
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = "https://" + _SCHEME.sub("", url)  # always the encrypted scheme, whatever was asked for
     webbrowser.open(url)
     return f"Opened {url} in the browser."
