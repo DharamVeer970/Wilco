@@ -301,7 +301,8 @@ def weather(city="", when="now"):
 
 
 def news_headlines(topic="", count=6):
-    """Today's news headlines. topic: leave empty for the main headlines, or give a subject
+    """Today's news — the latest headlines, breaking stories, what's trending and what's
+    happening right now in the world. topic: leave empty for the main headlines, or give a subject
     like cricket, technology, business. Read a few out conversationally — don't list all of
     them like a menu, and offer to go deeper on any one."""
     if topic.strip():

@@ -34,6 +34,9 @@ PY_MUTATES = re.compile(
     r"|\bshutil\.\w+"
     r"|\bsubprocess\b|\bPopen\b|\bcheck_call\b|\bcheck_output\b"
     r"|\.write\s*\(|\.writelines\s*\(|\.truncate\s*\("  # writing through a handle
+    r"|\.write_text\s*\(|\.write_bytes\s*\(|\.mkdir\s*\(|\.touch\s*\("  # pathlib writes
+    r"|\.unlink\s*\(|\.rmdir\s*\(|\.rename\s*\(|\.symlink_to\s*\(|\.hardlink_to\s*\("
+    r"|json\.dump\s*\(|pickle\.dump\s*\("
     r"|\.(?:post|put|patch|delete)\s*\(|\.send\w*\s*\("  # sending things outward
     r"|keybd_event|SetForegroundWindow|ShowWindow|SetCursorPos|mouse_event"
     r"|\btaskkill\b|\bshutdown\b|\bpress_key\b|\btype_text\b"

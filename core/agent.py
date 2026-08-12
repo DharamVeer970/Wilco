@@ -11,7 +11,7 @@ import re
 import time
 
 import mcp_tool
-from config import EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, chat_model
+from config import EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, TOOL_LIMIT, chat_model
 from core import roman
 from core.brain import PROMPTS, llm
 from windows.speech import speak
@@ -29,6 +29,11 @@ _MARKDOWN = re.compile(r"\*{1,3}|#{1,6}\s*|`+")
 _MACHINERY = ("tool_call_id", "tool_name", "tool_calls", '"parameters"', '"arguments"')
 _META_LINE = re.compile(r"^\s*(?:note|disclaimer|reasoning|thought|action)\s*:", re.I)
 _PUNCT_ONLY = re.compile(r"^[\s\[\]{}(),:\"']*$")
+# Tool results are stored trimmed. The model needs the gist of what came back, not every
+# character — a wide-open search or directory listing can be 3,000 chars, and every one of
+# those gets re-sent on each later step of the turn. 2,000 keeps answers complete and the
+# re-sent payload small.
+_TOOL_RESULT_MAX = 2000
 
 
 def _speakable(text):
@@ -91,6 +96,17 @@ def _written_calls(text):
     return found
 
 
+def _query_for_tools():
+    """What the tool router ranks against — the latest ask plus whatever the last tools
+    returned, so a follow-up like 'the first one' still lines up with the same tools."""
+    recent = []
+    for message in history[-8:]:
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            recent.append(content)
+    return " ".join(recent)
+
+
 def _ask():
     """One completion, retried when the provider generates nothing at all.
 
@@ -100,10 +116,13 @@ def _ask():
     out of twelve when tested. Nothing here can prevent it, so it is retried with a little
     backoff rather than costing the user their turn. Any other error is real and raised at once.
     """
+    # The full 77-tool payload was ~8,000 tokens on every call — the biggest single cost.
+    # dispatch_tools sends a routed, compact list instead, so each step is faster to chew.
+    tools = mcp_tool.dispatch_tools(_query_for_tools(), TOOL_LIMIT)
     for attempt in range(1, EMPTY_TRIES + 1):
         try:
             return llm.chat.completions.create(
-                model=chat_model, messages=history, tools=mcp_tool.TOOLS
+                model=chat_model, messages=history, tools=tools
             ).choices[0].message
         except Exception as e:
             if attempt == EMPTY_TRIES or "NO_TOOL_CALL_OR_RESPONSE" not in str(e):
@@ -173,6 +192,8 @@ def _run_calls(calls):
         print(f"  -> {call.function.name}({arguments})")
         result = mcp_tool.call(call.function.name, arguments)
         print(f"     {result[:160]}")
+        if len(result) > _TOOL_RESULT_MAX:
+            result = result[:_TOOL_RESULT_MAX] + "\n…(rest trimmed to keep responses fast)"
         history.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
 

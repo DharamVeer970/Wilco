@@ -294,7 +294,8 @@ restart, done. `.env.example` lists all of them with their defaults.
 | `WILCO_VOICE` | `ava` | Which voice pack it speaks in |
 | `WILCO_SPEED` | `25` | Talking pace, percent on top of that voice's own |
 | `WILCO_SPEED_STEP` | `15` | How far "talk faster" moves it |
-| `WILCO_MAX_STEPS` / `WILCO_MAX_MESSAGES` | `6` / `40` | Tool rounds per turn, conversation kept |
+| `WILCO_MAX_STEPS` / `WILCO_MAX_MESSAGES` | `6` / `24` | Tool rounds per turn, conversation kept |
+| `WILCO_TOOL_LIMIT` | `24` | Compact tool schemas the model sees per turn (`0` = all 77) |
 | `WILCO_FUZZ_MIN` | `70` | How close a spoken name must be to count as a match |
 | `WILCO_FAST_WORDS` | `9` | Longer than this goes to the agent, not the regex path |
 | `WILCO_SHELL_TIMEOUT` | `25` | Seconds before a shell command is given up on |

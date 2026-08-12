@@ -70,9 +70,11 @@ if not os.environ.get("HUGGINGFACE_API_KEY"):
 hf_token = os.environ["HUGGINGFACE_API_KEY"]
 
 MAX_STEPS = _number("WILCO_MAX_STEPS", 6, int)
-MAX_MESSAGES = _number("WILCO_MAX_MESSAGES", 40, int)
+MAX_MESSAGES = _number("WILCO_MAX_MESSAGES", 24, int)
 EMPTY_TRIES = _number("WILCO_EMPTY_TRIES", 3, int)
 LLM_TIMEOUT = _number("WILCO_LLM_TIMEOUT", 30)
+# how many compact tool schemas the model sees each turn (0 = all of them, no routing)
+TOOL_LIMIT = _number("WILCO_TOOL_LIMIT", 24, int)
 
 # ----------------------------------------------------------------- listening
 PAUSE_SECONDS = _number("WILCO_PAUSE", 2.5)

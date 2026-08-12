@@ -9,6 +9,7 @@ and can carry on talking about it, so an action and the conversation about it ar
 turn. Tools never speak — core/agent.py does that once, at the end.
 """
 import inspect
+import re
 from typing import Union
 
 from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow
@@ -49,7 +50,7 @@ def _json_type(param):
     return "string"
 
 
-def _schema(fn):
+def _schema(fn, description):
     properties, required = {}, []
     for name, param in inspect.signature(fn).parameters.items():
         properties[name] = {"type": _json_type(param)}
@@ -57,8 +58,30 @@ def _schema(fn):
             required.append(name)
     return {"type": "function", "function": {
         "name": fn.__name__,
-        "description": " ".join((inspect.getdoc(fn) or "").split()),
+        "description": description,
         "parameters": {"type": "object", "properties": properties, "required": required}}}
+
+
+def _full_description(fn):
+    """The whole docstring, normalised to one line — the spec for MCP clients and humans."""
+    return " ".join((inspect.getdoc(fn) or "").split())
+
+
+# The model gets a one-sentence summary instead of the full docstring. 77 full docstrings
+# were ~8,000 tokens of JSON on EVERY round trip — the single biggest cost in picking a
+# tool. The first sentence carries the "what it does and when to reach for it", which is
+# what the model actually needs; the full text stays available via list_my_tools and the
+# MCP server.
+_TOOL_DESC_MAX = 160
+
+
+def _summary(fn):
+    text = _full_description(fn)
+    end = text.find(". ")
+    first = text if end == -1 else text[: end + 1]
+    if len(first) <= _TOOL_DESC_MAX:
+        return first
+    return first[:_TOOL_DESC_MAX - 1].rstrip() + "…"
 
 
 def _public(module):
@@ -68,7 +91,55 @@ def _public(module):
 
 
 REGISTRY = {name: fn for module in MODULES for name, fn in _public(module).items()}
-TOOLS = [_schema(fn) for fn in REGISTRY.values()]
+TOOLS = [_schema(fn, _full_description(fn)) for fn in REGISTRY.values()]
+LLM_TOOLS = [_schema(fn, _summary(fn)) for fn in REGISTRY.values()]
+
+# ----------------------------------------------------------------- tool dispatch
+# Reading 77 schemas is expensive and pointing the model at all of them makes its pick
+# worse, not better. Each turn it sees the `limit` tools whose own words overlap the
+# query, plus the always-on set below it can never be without: the confirmation protocol,
+# the three generic runners, web access, and the generic UI controls — so a miss routes to
+# run_powershell / list_my_tools instead of "I can't".
+_STOPISH = frozenset("a an the and or but for with to of in on at by from you your he she "
+                     "it we they be been is are was were do does did can could will would "
+                     "should may might this that these those not no yes when where what "
+                     "which who how all some any more most its it's i'm".split())
+_WORD = re.compile(r"[a-z]{2,}")
+
+
+def _token_set(text):
+    return {w for w in _WORD.findall(text.lower()) if w not in _STOPISH}
+
+
+_TOOL_WORDS = {t["function"]["name"]: _token_set(
+    t["function"]["name"] + " " + t["function"]["description"]) for t in LLM_TOOLS}
+
+# Always on the wire — must never be missing, whatever the query looks like. Kept to the
+# essentials: the confirmation protocol, the three generic runners (so a miss can never
+# end in "I can't"), web access, knowing yourself, and the control discovery pair — a UI
+# task starts with list_controls to learn names, so it has to be there before any "click".
+CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run_python",
+              "web_search", "read_web_page", "list_my_tools", "self_check",
+              "list_controls", "click_control")
+
+
+def dispatch_tools(query, limit):
+    """The compact schemas for one turn: the `limit` most relevant tools plus CORE_TOOLS.
+
+    `limit` <= 0 (or big enough to cover everything) sends every compact schema, i.e. no
+    routing. The ranking is word-overlap between the query and each tool's own words, which
+    keeps the model's pick to a small, focused list — a fraction of the old payload.
+    """
+    if limit <= 0 or len(LLM_TOOLS) <= limit + len(CORE_TOOLS):
+        return LLM_TOOLS
+    tokens = _token_set(query)
+    chosen = []
+    if tokens:
+        ranked = sorted((len(tokens & _TOOL_WORDS[name]), name) for name in _TOOL_WORDS)
+        chosen = [name for _, name in sorted(ranked, reverse=True)[:limit]]
+    chosen.extend(name for name in CORE_TOOLS if name not in chosen)
+    want = set(chosen)
+    return [t for t in LLM_TOOLS if t["function"]["name"] in want]
 
 
 def call(name, arguments):
