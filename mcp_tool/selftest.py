@@ -170,3 +170,28 @@ def self_check():
 
     headline = "Everything checks out." if not problems else f"{problems} problem(s) found."
     return headline + "\n" + "\n".join(lines)
+
+
+def self_heal():
+    """Safely repair Wilco's recoverable in-memory state: refresh cached file/app indexes and
+    remove incomplete conversation tool-call history. It never changes user files, installs
+    anything, or alters Windows settings. Use after repeated stale search results, an app that
+    was just installed, or a conversation error; run self_check afterwards for verification."""
+    import windows.apps as apps
+    import windows.files as files
+    from core import agent
+
+    repaired = []
+    for label, cached in (("file library", files._scan),
+                          ("app list", apps.index),
+                          ("file opener list", apps.openers)):
+        clear = getattr(cached, "cache_clear", None)
+        if clear:
+            clear()
+            repaired.append(label)
+
+    before = len(agent.history)
+    agent._repair()
+    if len(agent.history) != before:
+        repaired.append("incomplete conversation history")
+    return "Self-heal completed: refreshed " + ", ".join(repaired) + "."

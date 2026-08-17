@@ -48,26 +48,59 @@ PLATFORMS = {
     "cohere": ("https://api.cohere.ai/compatibility/v1", "COHERE_API_KEY"),
     "huggingface": ("https://router.huggingface.co/v1", "HUGGINGFACE_API_KEY"),
     "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "nvidia": ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
     "ollama": ("http://localhost:11434/v1", None),
 }
 platform = _text("WILCO_PLATFORM", "cohere")
+# Model can be provider-specific (e.g. "nvidia/llama-3.3-nemotron-super-49b-v1.5") or just a model name
+# The platform determines which API key and base URL to use automatically
 chat_model = _text("WILCO_CHAT_MODEL", "command-a-03-2025")
-stt_model = _text("WILCO_STT_MODEL", "openai/whisper-large-v3")
+
+# Chat and speech recognition are separate services.  STT defaults live here, while .env can
+# override every field for any OpenAI-compatible provider without changing application code.
+# transport: openai = multipart /audio/transcriptions; openrouter = JSON/base64 equivalent;
+# huggingface = its Inference API protocol.
+STT_PROVIDER_DEFAULTS = {
+    "groq": {
+        "key_env": "GROQ_API_KEY", "base_url": "https://api.groq.com/openai/v1",
+        "transport": "openai", "model": "whisper-large-v3-turbo",
+    },
+    "openai": {
+        "key_env": "OPENAI_API_KEY", "base_url": "https://api.openai.com/v1",
+        "transport": "openai", "model": "whisper-1",
+    },
+    "openrouter": {
+        "key_env": "OPENROUTER_API_KEY", "base_url": "https://openrouter.ai/api/v1",
+        "transport": "openrouter", "model": "openai/whisper-large-v3",
+    },
+    "huggingface": {
+        "key_env": "HUGGINGFACE_API_KEY", "base_url": "",
+        "transport": "huggingface", "model": "openai/whisper-large-v3",
+    },
+}
+stt_provider = _text("WILCO_STT_PROVIDER", "groq").lower()
+_stt_defaults = STT_PROVIDER_DEFAULTS.get(stt_provider, {})
+stt_transport = _text("WILCO_STT_TRANSPORT", _stt_defaults.get("transport", "openai")).lower()
+stt_base_url = _text("WILCO_STT_BASE_URL", _stt_defaults.get("base_url", "")).rstrip("/")
+stt_key_env = _text("WILCO_STT_KEY_ENV", _stt_defaults.get("key_env", ""))
+stt_model = _text("WILCO_STT_MODEL", _stt_defaults.get("model", ""))
 
 if platform not in PLATFORMS:
     raise SystemExit(f"WILCO_PLATFORM={platform!r} is not one of: {', '.join(PLATFORMS)}")
 
 base_url, key_var = PLATFORMS[platform]
 apikey = os.environ[key_var] if key_var else "ollama"
-if not os.environ.get("HUGGINGFACE_API_KEY"):
+if stt_transport not in ("openai", "openrouter", "huggingface"):
+    raise SystemExit("WILCO_STT_TRANSPORT must be openai, openrouter, or huggingface.")
+if not stt_model or (stt_transport != "huggingface" and not stt_base_url):
+    raise SystemExit("Set WILCO_STT_MODEL and WILCO_STT_BASE_URL for a custom STT provider.")
+stt_api_key = _text("WILCO_STT_API_KEY", "") or os.environ.get(stt_key_env, "")
+if not stt_api_key:
     raise SystemExit(
-        "HUGGINGFACE_API_KEY is missing. Speech-to-text runs on Hugging Face Whisper "
-        "whatever the chat provider is, so this key is always required.\n"
-        "Get one at https://huggingface.co/settings/tokens (a read token is enough) "
-        "and put it in your .env file."
+        f"No speech-to-text API key is configured for {stt_provider}. Set WILCO_STT_API_KEY "
+        f"or put the token in {stt_key_env or 'the variable named by WILCO_STT_KEY_ENV'}."
     )
-hf_token = os.environ["HUGGINGFACE_API_KEY"]
 
 MAX_STEPS = _number("WILCO_MAX_STEPS", 6, int)
 MAX_MESSAGES = _number("WILCO_MAX_MESSAGES", 24, int)
@@ -90,6 +123,8 @@ SPEECH_FIRST_GROUP = _number("WILCO_SPEECH_FIRST_GROUP", 90, int)
 SPEECH_LATER_GROUP = _number("WILCO_SPEECH_LATER_GROUP", 400, int)
 SPEECH_LEAST_GROUP = _number("WILCO_SPEECH_LEAST_GROUP", 40, int)
 SPEECH_CACHEABLE = _number("WILCO_SPEECH_CACHE", 120, int)
+# Prevent an identical reply from being played twice when two code paths finish together.
+SPEECH_DEDUP_SECONDS = _number("WILCO_SPEECH_DEDUP_SECONDS", 2.0)
 
 # ----------------------------------------------------------------- how it decides
 FUZZ_MIN = _number("WILCO_FUZZ_MIN", 70, int)

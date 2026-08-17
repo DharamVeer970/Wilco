@@ -185,6 +185,11 @@ def open_item(kind, spoken, exe=None):
 def open_any_file(name, kinds=("document", "image", "video", "music")):
     """Open a file of any kind, asking when more than one across all kinds matches."""
     global _pending
+    # A complete path is already the answer. Avoid scanning every drive.
+    direct = os.path.abspath(os.path.expanduser(name.strip().strip('"')))
+    if os.path.isfile(direct):
+        kind = files.EXT_KIND.get(os.path.splitext(direct)[1].lower(), "document")
+        return _open_path(kind, os.path.splitext(os.path.basename(direct))[0], direct)
     several = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
     if not several:
         return False
@@ -1134,6 +1139,12 @@ def _step_open(query, _spoken):
     if not m:
         return None
     name = APP_SUFFIX.sub("", m.group(1).strip(STRIP)).rstrip()
+    name = re.sub(r"\s+for\s+me(?:\s+to\s+(?:view|see))?$", "", name)
+    if (re.fullmatch(r"(?:it|that|this|(?:this|that|the) (?:file|image|screenshot|photo|picture))", name)
+            and context.file and os.path.isfile(context.file)):
+        kind = files.EXT_KIND.get(os.path.splitext(context.file)[1].lower(), "document")
+        _open_path(kind, os.path.splitext(os.path.basename(context.file))[0], context.file)
+        return "command"
     return "command" if open_app(name) or open_any_file(name) else None
 
 

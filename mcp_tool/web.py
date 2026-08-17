@@ -106,7 +106,7 @@ def _real_url(href):
 _ADVERT = re.compile(r"duckduckgo\.com/y\.js|[?&]ad_(?:domain|provider|type)=|/aclick\?")
 
 
-def web_search(query, count=5):
+def web_search(query, count=3):
     """Search the web and read back the top results. Use this whenever you are asked about
     news, current events, prices, scores, releases, or any fact you are not certain of.
     Answer from the results — do not guess. query: the search terms. count: how many results."""

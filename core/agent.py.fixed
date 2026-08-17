@@ -1,4 +1,4 @@
-"""The tool-calling loop — Wilco's actual decision making.
+"""The tool-calling loop â€” Wilco's actual decision making.
 
 The old path classified one utterance into one action from a fixed enum, then handed back.
 That is why things got "understood" but nothing followed: no second step, no reading of the
@@ -42,7 +42,7 @@ _URL = re.compile(r"https?://[^\s<>\"')\]]+|\bwww\.[^\s<>\"')\]]+", re.I)
 _EMPTY_PAREN = re.compile(r"\(\s*\)")
 _WS_SQUASH = re.compile(r"\s{2,}")
 # Tool results are stored trimmed. The model needs the gist of what came back, not every
-# character — a wide-open search or directory listing can be 3,000 chars, and every one of
+# character â€” a wide-open search or directory listing can be 3,000 chars, and every one of
 # those gets re-sent on each later step of the turn. 2,000 keeps answers complete and the
 # re-sent payload small.
 _TOOL_RESULT_MAX = 2000
@@ -68,7 +68,7 @@ def _speakable(text):
 
 # The voice can be handed Devanagari and simply say nothing, which looks like a crash rather
 # than a language problem. Converting it is a lookup table, so core/roman.py does it here
-# instead of spending an API call — a third of the month's quota, for a Hindi speaker.
+# instead of spending an API call â€” a third of the month's quota, for a Hindi speaker.
 def _romanise(text):
     """Rewrite non-Latin script into Latin letters so the voice can actually say it."""
     if not roman.has_devanagari(text):
@@ -78,7 +78,7 @@ def _romanise(text):
 
 # The model sometimes TYPES a tool call instead of making one, and sometimes narrates an
 # action it never took. Both leave the user told it happened when it didn't, which is the
-# worst thing this can do — so both are caught rather than trusted.
+# worst thing this can do â€” so both are caught rather than trusted.
 _WRITTEN = re.compile(r"[\[{].*[\]}]", re.S)
 _CLAIMED = re.compile(
     r"\b(?:i(?:'ve| have)?\s+(?:just\s+|now\s+)?(?:opened|set|changed|closed|sent|created|"
@@ -119,7 +119,7 @@ def _written_calls(text):
 
 
 def _query_for_tools():
-    """What the tool router ranks against — the latest ask plus whatever the last tools
+    """What the tool router ranks against â€” the latest ask plus whatever the last tools
     returned, so a follow-up like 'the first one' still lines up with the same tools."""
     recent = []
     for message in history[-8:]:
@@ -133,12 +133,12 @@ def _ask():
     """One completion, retried when the provider generates nothing at all.
 
     Cohere intermittently answers a perfectly valid request with 422
-    NO_TOOL_CALL_OR_RESPONSE_GENERATED — no tool call, no text, nothing. It is a flake on
+    NO_TOOL_CALL_OR_RESPONSE_GENERATED â€” no tool call, no text, nothing. It is a flake on
     their side, not a fault in the request: the identical message shape succeeded twelve times
     out of twelve when tested. Nothing here can prevent it, so it is retried with a little
     backoff rather than costing the user their turn. Any other error is real and raised at once.
     """
-    # The full 77-tool payload was ~8,000 tokens on every call — the biggest single cost.
+    # The full 77-tool payload was ~8,000 tokens on every call â€” the biggest single cost.
     # dispatch_tools sends a routed, compact list instead, so each step is faster to chew.
     tools = mcp_tool.dispatch_tools(_query_for_tools(), TOOL_LIMIT)
     for attempt in range(1, EMPTY_TRIES + 1):
@@ -149,12 +149,12 @@ def _ask():
         except Exception as e:
             if attempt == EMPTY_TRIES or "NO_TOOL_CALL_OR_RESPONSE" not in str(e):
                 raise
-            print(f"  (empty generation — retry {attempt} of {EMPTY_TRIES - 1})")
+            print(f"  (empty generation â€” retry {attempt} of {EMPTY_TRIES - 1})")
             time.sleep(attempt)
 
 
 def _as_dict(message):
-    """Only the fields the API accepts back — providers reject their own extra keys."""
+    """Only the fields the API accepts back â€” providers reject their own extra keys."""
     data = message.model_dump(exclude_none=True)
     return {k: v for k, v in data.items() if k in ("role", "content", "tool_calls")}
 
@@ -196,9 +196,9 @@ def _turn_failed(checkpoint, acted, error):
     print("Agent error:", error)
     # Roll the whole turn back. Deleting just the last message used to strip a tool
     # RESULT when the failure landed mid-loop, stranding the tool call that produced
-    # it — and a stranded tool call breaks every request that follows it, for good.
+    # it â€” and a stranded tool call breaks every request that follows it, for good.
     del history[checkpoint:]
-    # If tools already ran, the work really happened — saying "I couldn't reach my
+    # If tools already ran, the work really happened â€” saying "I couldn't reach my
     # brain" would be a lie about a machine the user is looking at.
     speak("I did that, but couldn't put the reply together. Ask again for the details?"
           if acted else "I couldn't reach my brain just then. Say that again?")
@@ -227,7 +227,7 @@ def _run_calls(calls):
             print(f"     ERROR: {result[:160]}")
 
         if len(result) > _TOOL_RESULT_MAX:
-            result = result[:_TOOL_RESULT_MAX] + "\n…(rest trimmed to keep responses fast)"
+            result = result[:_TOOL_RESULT_MAX] + "\nâ€¦(rest trimmed to keep responses fast)"
         history.append({"role": "tool", "tool_call_id": call.id, "content": result})
         results.append((call.function.name, result))
     return results
@@ -240,12 +240,12 @@ def _run_written(written):
         print(f"  -> {line[:160]}  [recovered from text]")
     history.append({"role": "user", "content":
                     "Those tool calls were written as text, so they have now been "
-                    "run for you. Results — " + "; ".join(results) +
+                    "run for you. Results â€” " + "; ".join(results) +
                     ". Tell the user what happened, in a sentence or two."})
 
 
 def _nudge():
-    print("  [claimed an action without calling anything — asking again]")
+    print("  [claimed an action without calling anything â€” asking again]")
     history.append({"role": "user", "content":
                     "You described that as done, but you called no tool, so "
                     "nothing actually happened. Call the tool that does it now, "
@@ -329,11 +329,7 @@ def respond(text, already_done=()):
         acted = acted or outcome == "ran"
         nudged = nudged or outcome == "nudged"
 
-    # Only speak the "too many steps" message if we didn't already speak via _no_calls
-    # _no_calls returns "spoke" when there are no tool calls and we should speak the result
-    # If we get here, the loop completed without hitting "spoke", meaning we need the fallback
-    if outcome != "spoke":
-        speak("That turned into more steps than I expected, so I've stopped. What were you after?")
+    speak("That turned into more steps than I expected, so I've stopped. What were you after?")
     _trim()
 
 

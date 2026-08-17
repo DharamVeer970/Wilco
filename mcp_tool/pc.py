@@ -24,6 +24,38 @@ from mcp_tool.gate import _park
 KINDS = ("music", "video", "image", "document")
 
 
+def _normalise_kind(kind):
+    """Map friendly plurals and extensions to the file-library kinds."""
+    value = str(kind or "any").strip().lower().lstrip(".")
+    aliases = {
+        "": "any", "any": "any", "file": "any", "files": "any",
+        "music": "music", "audio": "music", "song": "music", "songs": "music",
+        "video": "video", "videos": "video",
+        "image": "image", "images": "image", "photo": "image", "photos": "image",
+        "picture": "image", "pictures": "image", "screenshot": "image",
+        "document": "document", "documents": "document", "doc": "document", "docs": "document",
+    }
+    return aliases.get(value, files.EXT_KIND.get("." + value, value))
+
+
+def _kinds_for(kind):
+    """Return valid kinds, or the error the tool should give the caller."""
+    normalised = _normalise_kind(kind)
+    if normalised == "any":
+        return KINDS, None
+    if normalised not in KINDS:
+        return (), f"kind must be one of: any, {', '.join(KINDS)}."
+    return (normalised,), None
+
+
+def _existing_file(value):
+    """Resolve a direct path without invoking the slow disk-library scan."""
+    if not isinstance(value, str):
+        return None
+    candidate = _resolve(value)
+    return candidate if os.path.isfile(candidate) else None
+
+
 # ----------------------------------------------------------------- apps and windows
 def open_app(name):
     """Launch an installed application by its spoken name — 'notepad', 'chrome', 'vs code'.
@@ -229,7 +261,13 @@ def find_files(name, kind="any"):
     """Find files by name across the drives. kind: music, video, image, document, or any.
     Returns what matched — use open_file to actually open one. The first call of the session
     scans the disks and takes a few seconds."""
-    kinds = KINDS if kind in ("any", "", None) else (kind,)
+    direct = _existing_file(name)
+    if direct:
+        file_kind = files.EXT_KIND.get(os.path.splitext(direct)[1].lower(), "file")
+        return f"1 match: {os.path.basename(direct)} ({file_kind}) in {os.path.dirname(direct)}"
+    kinds, error = _kinds_for(kind)
+    if error:
+        return error
     hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
     if not hits:
         return f"No {kind} files matching {name}."
@@ -321,8 +359,13 @@ def list_drives():
 def file_info(name, kind="any"):
     """Get details about a file — its full path, size, type and last-modified date. Use when
     the user asks how big a file is, when it was changed, or where exactly it lives."""
-    kinds = KINDS if kind in ("any", "", None) else (kind,)
-    hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
+    direct = _existing_file(name)
+    kinds, error = _kinds_for(kind)
+    if error:
+        return error
+    hits = ([(files.EXT_KIND.get(os.path.splitext(direct)[1].lower(), "file"),
+              os.path.splitext(os.path.basename(direct))[0], direct)] if direct else
+            [(k, n, p) for k in kinds for n, p in files.matches(k, name)])
     if not hits:
         return f"No file matching {name}."
     if len(hits) > 1:
@@ -350,8 +393,13 @@ def file_info(name, kind="any"):
 def open_file(name, kind="any"):
     """Open a file by name in its default application. If several match, they are listed
     rather than guessed — ask which one, then call again with a fuller name."""
-    kinds = KINDS if kind in ("any", "", None) else (kind,)
-    hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
+    direct = _existing_file(name)
+    kinds, error = _kinds_for(kind)
+    if error:
+        return error
+    hits = ([(files.EXT_KIND.get(os.path.splitext(direct)[1].lower(), "file"),
+              os.path.splitext(os.path.basename(direct))[0], direct)] if direct else
+            [(k, n, p) for k in kinds for n, p in files.matches(k, name)])
     
     if not hits:
         return f"No file matching {name}."
@@ -360,7 +408,10 @@ def open_file(name, kind="any"):
         return f"{len(hits)} files match: {listed}. Ask which one, then call open_file again."
 
     _, found_name, path = hits[0]
-    files.open_file(path)
+    try:
+        files.open_file(path)
+    except OSError as e:
+        return f"Couldn't open {found_name}: {e.strerror or e}"
     context.file = path
     return f"Opened {found_name} from {os.path.dirname(path)}."
 
@@ -374,7 +425,9 @@ def list_folder_contents(folder_name, kind="any"):
         path = found[0][1] if found else None
     if not path:
         return f"Couldn't find a folder called {folder_name}."
-    kinds = KINDS if kind in ("any", "", None) else (kind,)
+    kinds, error = _kinds_for(kind)
+    if error:
+        return error
     items = [(k, n) for k in kinds for n, _ in files.in_folder(path, k)]
     context.folder = path
     if not items:
@@ -689,6 +742,8 @@ def take_screenshot(what="screen"):
         image = ImageGrab.grab(all_screens=True)
         where = ""
     image.save(path)
+    # Follow-ups like "open this screenshot" should use this exact file, not scan disks.
+    context.file = path
     return f"Screenshot{where} saved as {os.path.basename(path)} in {folder}."
 
 

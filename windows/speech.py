@@ -2,6 +2,9 @@ import io
 import math
 import time
 import wave
+import base64
+
+import requests
 
 try:
     import audioop  # C-speed RMS; present via audioop-lts on Python 3.13+/3.14 (SpeechRecognition's dep)
@@ -17,7 +20,7 @@ except ImportError:
     sd = None
 
 import config
-from config import hf_token, stt_model
+from config import stt_api_key, stt_base_url, stt_model, stt_transport
 from windows.voice import speak
 
 r = sr.Recognizer()
@@ -28,10 +31,10 @@ r.non_speaking_duration = min(0.5, config.PAUSE_SECONDS / 2)
 r.phrase_threshold = config.MIN_PHRASE_SECONDS
 r.dynamic_energy_threshold = True
 
-hf = InferenceClient(
-    api_key=hf_token, provider="hf-inference",
-    headers={"Content-Type": "audio/wav"}, timeout=30,  # else a cold model hangs the loop
-)
+hf = (InferenceClient(
+    api_key=stt_api_key, provider="hf-inference",
+    headers={"Content-Type": "audio/wav"}, timeout=30,
+) if stt_transport == "huggingface" else None)
 _calibrated = False
 _backend = None
 
@@ -53,6 +56,70 @@ def _wav(frames, sample_rate):
         file.setframerate(sample_rate)
         file.writeframes(b"".join(frames))
     return output.getvalue()
+
+
+def _transcribe_openai_compatible(wav_data):
+    """Send WAV audio to any OpenAI-compatible transcription endpoint."""
+    response = requests.post(
+        f"{stt_base_url}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {stt_api_key}"},
+        files={"file": ("speech.wav", wav_data, "audio/wav")},
+        data={"model": stt_model, "response_format": "json"},
+        timeout=30,
+    )
+    if not response.ok:
+        detail = response.text[:300].replace("\n", " ")
+        raise RuntimeError(f"STT provider returned HTTP {response.status_code}: {detail}")
+    try:
+        text = response.json().get("text", "")
+    except ValueError as e:
+        raise RuntimeError("STT provider returned invalid JSON") from e
+    if not isinstance(text, str) or not text.strip():
+        raise RuntimeError("STT provider returned an empty transcription")
+    return text
+
+
+def _transcribe_openrouter(wav_data):
+    """Use OpenRouter's documented JSON/base64 STT endpoint."""
+    response = requests.post(
+        f"{stt_base_url}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {stt_api_key}", "Content-Type": "application/json"},
+        json={"input_audio": {"data": base64.b64encode(wav_data).decode("ascii"), "format": "wav"},
+              "model": stt_model},
+        timeout=30,
+    )
+    if not response.ok:
+        detail = response.text[:300].replace("\n", " ")
+        raise RuntimeError(f"STT provider returned HTTP {response.status_code}: {detail}")
+    try:
+        text = response.json().get("text", "")
+    except ValueError as e:
+        raise RuntimeError("STT provider returned invalid JSON") from e
+    if not isinstance(text, str) or not text.strip():
+        raise RuntimeError("STT provider returned an empty transcription")
+    return text
+
+
+def _transcribe(wav_data):
+    """Use the selected provider while keeping the microphone loop provider-neutral."""
+    transports = {
+        "openai": _transcribe_openai_compatible,
+        "openrouter": _transcribe_openrouter,
+        "huggingface": lambda audio: hf.automatic_speech_recognition(audio, model=stt_model).text,
+    }
+    return transports[stt_transport](wav_data)
+
+
+def _recognition_error_message(error):
+    """A useful spoken recovery hint for the common provider-side failures."""
+    detail = str(error).lower()
+    if "429" in detail or "rate limit" in detail:
+        return "The speech provider's limit is busy right now. Please wait a moment and try again."
+    if "401" in detail or "403" in detail or "api key" in detail:
+        return "The speech service key needs attention. Check the STT provider settings in your configuration."
+    if "402" in detail or "credit" in detail or "quota" in detail:
+        return "The speech service quota is unavailable. Use local Whisper or add provider credit."
+    return "I didn't catch that."
 
 
 def _listen_with_sounddevice():
@@ -128,10 +195,10 @@ def take_command():
 
     print("Recognizing...")
     try:
-        query = hf.automatic_speech_recognition(wav_data, model=stt_model).text
+        query = _transcribe(wav_data)
     except Exception as e:
         print("Speech recognition failed:", e)
-        speak("I didn't catch that.")  # say it, or a dead API just looks like deafness
+        speak(_recognition_error_message(e))
         return ""
     print(f"User said: {query}")
     return query.strip().lower()

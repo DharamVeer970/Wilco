@@ -26,6 +26,7 @@ import queue
 import re
 import tempfile
 import threading
+import time
 
 import pythoncom
 import win32com.client
@@ -61,6 +62,8 @@ SENTENCE = re.compile(r"[^.!?\n]+[.!?\n]*")
 
 _serial = itertools.count()
 _local = threading.local()
+_speech_lock = threading.RLock()
+_last_spoken = ("", float("-inf"))
 
 
 def _sapi():
@@ -123,15 +126,29 @@ def _resolve(name):
 
 
 def speak(text):
-    print(f"Wilco: {text}")
     text = (text or "").strip()
     if not text:
         return
-    voice_id = VOICES[_state["voice"]][0]
-    if edge_tts is None or voice_id.startswith(LOCAL):
-        _speak_local(text, voice_id)
-    else:
-        _speak_neural(text, voice_id)
+    # Replies can arrive at the same time from a command, an agent, or a reminder thread.
+    # Serialise audio playback and suppress an immediate identical replay; this fixes doubled
+    # speech without discarding distinct messages that happen to arrive close together.
+    global _last_spoken
+    fingerprint = " ".join(text.casefold().split())
+    with _speech_lock:
+        previous, finished_at = _last_spoken
+        if (fingerprint == previous
+                and time.monotonic() - finished_at < config.SPEECH_DEDUP_SECONDS):
+            print(f"Wilco: duplicate reply suppressed: {text}")
+            return
+        print(f"Wilco: {text}")
+        try:
+            voice_id = VOICES[_state["voice"]][0]
+            if edge_tts is None or voice_id.startswith(LOCAL):
+                _speak_local(text, voice_id)
+            else:
+                _speak_neural(text, voice_id)
+        finally:
+            _last_spoken = (fingerprint, time.monotonic())
 
 
 def _speak_local(text, voice_id=LOCAL):
@@ -162,13 +179,24 @@ def _speak_neural(text, voice_id):
 
 
 def _synthesise(groups, voice_id, rate, ready):
+    gave_up = False
     for group in groups:
-        try:
-            ready.put(_download(group, voice_id, rate))
-        except Exception as e:
-            print("Neural voice unavailable, falling back to the Windows one:", e)
+        if gave_up:
+            # The network already failed: don't keep hanging on it, just read the rest
+            # out loud on the built-in Windows voice.
             ready.put(None)
-            return
+            continue
+        try:
+            try:
+                ready.put(_download(group, voice_id, rate))
+            except Exception as e:
+                # A single stalled chunk shouldn't drop the neural voice for the whole turn.
+                print("neural voice stalled, retrying once:", e)
+                ready.put(_download(group, voice_id, rate))
+        except Exception as e:
+            print("neural voice unavailable, reading the rest locally:", e)
+            ready.put(None)
+            gave_up = True
 
 
 def _download(text, voice_id, rate):
@@ -195,7 +223,7 @@ def _download(text, voice_id, rate):
 
 async def _stream(text, voice_id, rate):
     speech = edge_tts.Communicate(text, voice_id, rate=rate,
-                                  connect_timeout=5, receive_timeout=20)
+                                  connect_timeout=4, receive_timeout=10)
     return b"".join([p["data"] async for p in speech.stream() if p["type"] == "audio"])
 
 

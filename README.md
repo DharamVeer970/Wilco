@@ -254,12 +254,25 @@ dangerous half, but everything else runs on request.
 
 ## Switching provider
 
-Two lines in [config.py](config.py) plus the matching key in `.env`:
+Change just two values in your `.env` file — no need to edit `config.py` or any other code:
 
-```python
-platform = "cohere"
-chat_model = "command-a-03-2025"
+```bash
+WILCO_PLATFORM=nvidia
+WILCO_CHAT_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
+
+The platform determines the API key environment variable and base URL automatically from
+`config.py`. See the [Configuration](#configuration) table below for supported platforms
+and example models.
+
+**Important**: The model name can be provider-specific (e.g. `nvidia/llama-3.3-nemotron-super-49b-v1.5`)
+or just a model name — the platform setting tells Wilco which API endpoint and key variable to use.
+
+Provider support notes:
+- Cohere `command-a-03-2025` is the tested default and handles parallel tool calls, so
+  "open notepad and search for X" resolves in one round trip
+- Groq, OpenAI, Anthropic, and other providers may have different tool call support —
+  choose a provider that supports the tools you need
 
 | `platform` | `.env` key | Example model |
 |---|---|---|
@@ -268,12 +281,9 @@ chat_model = "command-a-03-2025"
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
 | `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
 | `huggingface` | `HUGGINGFACE_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct` |
+| `openrouter` | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct` |
+| `nvidia` | `NVIDIA_API_KEY` | `nvidia/llama-3.3-nemotron-super-49b-v1.5` |
 | `ollama` | *(none)* | `llama3.2` |
-
-The provider must support tool calling, and support it well — the agent is only as good as
-that. Cohere `command-a-03-2025` is the tested default and handles parallel tool calls, so
-"open notepad and search for X" resolves in one round trip. Groq's `llama-3.3-70b-versatile`
-was tried and returned a 400 on the same tool schema.
 
 ## Configuration
 
@@ -285,8 +295,8 @@ restart, done. `.env.example` lists all of them with their defaults.
 |---|---|---|
 | `HUGGINGFACE_API_KEY` | *required* | Whisper speech-to-text |
 | `COHERE_API_KEY` | *required for the default provider* | Chat + tool calling |
-| `WILCO_PLATFORM` | `cohere` | openai, anthropic, cohere, huggingface, groq, ollama |
-| `WILCO_CHAT_MODEL` | `command-a-03-2025` | The model on that provider |
+| `WILCO_PLATFORM` | `cohere` | openai, anthropic, cohere, huggingface, groq, openrouter, nvidia, ollama (change WILCO_CHAT_MODEL to match) |
+| `WILCO_CHAT_MODEL` | `command-a-03-2025` | The model on that provider (can be provider-specific, e.g. nvidia/llama-3.3-nemotron-super-49b-v1.5) |
 | `WILCO_STT_MODEL` | `openai/whisper-large-v3` | Which Whisper does the listening |
 | `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
 | `WILCO_MIN_PHRASE` / `WILCO_MAX_PHRASE` | `0.4` / `45` | Shortest and longest utterance |

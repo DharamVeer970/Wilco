@@ -12,9 +12,13 @@ import inspect
 import re
 from typing import Union
 
-from mcp_tool import gate, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow
+from mcp_tool import gate, governance, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow, workspace
 
-MODULES = (pc, ui, web, reminders, message, shell_tool, workflow, selftest, voice, gate)
+# governance & extensibility (all off by default — see core/safety.py, core/plugins.py)
+from core import plugins as _plugins
+from core import safety as _safety
+
+MODULES = (pc, ui, web, reminders, message, shell_tool, workflow, selftest, voice, gate, workspace, governance)
 JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
@@ -91,8 +95,40 @@ def _public(module):
 
 
 REGISTRY = {name: fn for module in MODULES for name, fn in _public(module).items()}
+
+# Extensibility: custom tools from plugins/ folder (only when WILCO_PLUGINS_ENABLED=1).
+# Loaded lazily at import, merged into the same registry so they get schemas + dispatch.
+for _pname, _pfn in _plugins.load_plugins().items():
+    REGISTRY.setdefault(_pname, _pfn)
+
 TOOLS = [_schema(fn, _full_description(fn)) for fn in REGISTRY.values()]
 LLM_TOOLS = [_schema(fn, _summary(fn)) for fn in REGISTRY.values()]
+
+# Models occasionally use the most natural argument spelling instead of the schema spelling
+# (for example `path` for open_file).  Recover only unambiguous aliases; unknown parameters
+# still produce an explicit error rather than being silently discarded.
+_ARGUMENT_ALIASES = {
+    "path": ("name", "folder_name"),
+    "file_path": ("name", "path"),
+    "filename": ("name",),
+    "folder": ("folder_name",),
+}
+
+
+def _normalise_arguments(fn, arguments):
+    """Return safe, schema-shaped arguments and whether an alias was repaired."""
+    if not isinstance(arguments, dict):
+        return arguments, False
+    allowed = set(inspect.signature(fn).parameters)
+    fixed, recovered = dict(arguments), False
+    for supplied, targets in _ARGUMENT_ALIASES.items():
+        if supplied not in fixed or supplied in allowed:
+            continue
+        target = next((name for name in targets if name in allowed and name not in fixed), None)
+        if target:
+            fixed[target] = fixed.pop(supplied)
+            recovered = True
+    return fixed, recovered
 
 # ----------------------------------------------------------------- tool dispatch
 # Reading 77 schemas is expensive and pointing the model at all of them makes its pick
@@ -120,7 +156,8 @@ _TOOL_WORDS = {t["function"]["name"]: _token_set(
 # task starts with list_controls to learn names, so it has to be there before any "click".
 CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run_python",
               "web_search", "read_web_page", "list_my_tools", "self_check",
-              "list_controls", "click_control")
+              "list_controls", "click_control",
+              "check_requirements", "install_requirements", "run_tests")
 
 
 def dispatch_tools(query, limit):
@@ -152,9 +189,34 @@ def call(name, arguments):
     fn = REGISTRY.get(name)
     if fn is None:
         return f"No tool called {name}. Available: {', '.join(REGISTRY)}"
+    arguments, recovered = _normalise_arguments(fn, arguments)
+    if not isinstance(arguments, dict):
+        return f"Wrong arguments for {name}: arguments must be an object."
+    import time as _time
+    _start = _time.time()
+
+    # Permission gate: block the tool outright if it's not allowed (off by default).
+    if not _safety.check_permission(name):
+        _safety.audit(tool=name, arguments=arguments, ok=False, note="denied by permission rule")
+        return f"{name} is not permitted under the current rules. Ask to enable it, or rephrase."
+
+    # Rate limiting: refuse when this tool has been used too often in its window.
+    if not _safety._permitted_now(name):
+        _safety.audit(tool=name, arguments=arguments, ok=False, note="rate limited")
+        return f"{name} has been used too many times recently. Wait a moment and try again."
+
     try:
-        return str(fn(**arguments))
+        result = str(fn(**arguments))
+        if recovered:
+            result = "Recovered the argument name automatically. " + result
+        _safety.audit(tool=name, arguments=arguments, result_len=len(result),
+                      ok=True, latency=_time.time() - _start, note="ok")
+        return result
     except TypeError as e:
+        _safety.audit(tool=name, arguments=arguments, ok=False,
+                      latency=_time.time() - _start, note=f"bad args: {e}")
         return f"Wrong arguments for {name}: {e}"
     except Exception as e:
+        _safety.audit(tool=name, arguments=arguments, ok=False,
+                      latency=_time.time() - _start, note=f"{type(e).__name__}")
         return f"{name} failed: {type(e).__name__}: {e}"

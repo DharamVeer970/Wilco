@@ -1,6 +1,7 @@
 import os
 import re
 import string
+from fnmatch import fnmatchcase
 from functools import lru_cache
 
 from rapidfuzz import fuzz, process
@@ -110,11 +111,21 @@ def in_folder(path, kind):
 
 def matches(kind, spoken, limit=5):
     """Every file whose name starts a word with the spoken text — for asking which."""
-    spoken = spoken.strip().lower()
+    spoken = os.path.basename(spoken.strip().strip('"')).lower()
     if not spoken:
         return []
+    stem = os.path.splitext(spoken)[0]
+    if "*" in spoken or "?" in spoken:
+        return sorted((s for s in library(kind)
+                       if fnmatchcase(s[0].lower(), stem)
+                       or fnmatchcase(os.path.basename(s[1]).lower(), spoken)),
+                      key=lambda s: len(s[0]))[:limit]
     word = re.compile(rf"\b{re.escape(spoken)}", re.I)
-    return sorted((s for s in library(kind) if word.search(s[0])), key=lambda s: len(s[0]))[:limit]
+    stem_word = re.compile(rf"\b{re.escape(stem)}", re.I)
+    return sorted((s for s in library(kind)
+                   if word.search(s[0]) or stem_word.search(s[0])
+                   or os.path.basename(s[1]).lower() == spoken),
+                  key=lambda s: len(s[0]))[:limit]
 
 
 def find(kind, spoken, fuzzy=True):

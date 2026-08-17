@@ -1,9 +1,9 @@
 .env
 contacts.json
-test_wilco.py
 __pycache__/
 *.pyc
 .pytest_cache/
 Openai/
 macros.json
 .vscode/
+tests/
