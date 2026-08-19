@@ -91,11 +91,14 @@ if platform not in PLATFORMS:
 
 base_url, key_var = PLATFORMS[platform]
 apikey = os.environ[key_var] if key_var else "ollama"
+
 if stt_transport not in ("openai", "openrouter", "huggingface"):
     raise SystemExit("WILCO_STT_TRANSPORT must be openai, openrouter, or huggingface.")
+
 if not stt_model or (stt_transport != "huggingface" and not stt_base_url):
     raise SystemExit("Set WILCO_STT_MODEL and WILCO_STT_BASE_URL for a custom STT provider.")
 stt_api_key = _text("WILCO_STT_API_KEY", "") or os.environ.get(stt_key_env, "")
+
 if not stt_api_key:
     raise SystemExit(
         f"No speech-to-text API key is configured for {stt_provider}. Set WILCO_STT_API_KEY "
