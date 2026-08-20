@@ -45,6 +45,16 @@ PY_MUTATES = re.compile(
     r"|\bpip\b",
     re.I)
 
+# Routine Python can run directly. These forms can destroy/overwrite data, execute an
+# arbitrary child command, install code, change the registry, or send data outward.
+PY_CRITICAL = re.compile(
+    r"\b(?:os\.(?:remove|unlink|rmdir|removedirs|replace)|shutil\.(?:rmtree|move)|"
+    r"winreg\.(?:Set|Delete|Create)\w*|subprocess\.(?:run|call|Popen|check_call|check_output)|"
+    r"os\.system|(?:pip|venv)\b|(?:requests|httpx)\.(?:post|put|patch|delete)|"
+    r"\.send\w*\s*\(|\.write(?:_text|_bytes|lines)?\s*\(|\.truncate\s*\(|"
+    r"open\s*\([^)]*['\"][wax+])",
+    re.I)
+
 
 READ_ONLY = re.compile(
     r"^\s*\(?\s*(?:get-|test-|resolve-|measure-|select-|compare-|convertto-|convertfrom-|"
@@ -68,11 +78,29 @@ CHANGES = re.compile(
 
 # a separator or redirect can hide a second, unvetted command behind a harmless-looking first
 SMUGGLE = re.compile(r"[;>&`]|\$\(|\|\s*%|\bthen\b")
+NETSH_STATUS = re.compile(r"^\s*netsh\s+wlan\s+show\s+(?:interfaces|profiles)\s*$", re.I)
+POWERSHELL_CRITICAL = re.compile(
+    r"\b(?:remove-item|\brm\b|\bdel\b|erase|rmdir|format(?:-volume)?|clear-disk|"
+    r"clear-recyclebin|diskpart|bcdedit|cipher|manage-bde|bitlocker|shutdown|"
+    r"restart-computer|stop-computer|restart|logoff|set-executionpolicy|set-acl|icacls|"
+    r"takeown|reg(?:\.exe)?\s+(?:add|delete)|(?:new|set|remove)-(?:localuser|localgroup|"
+    r"localgroupmember)|net\s+user|install|uninstall|winget|choco|msiexec|key\s*=\s*clear|"
+    r"out-file|set-content|add-content|export-(?:csv|clixml)|git\s+(?:reset\s+--hard|clean|push))\b|>{1,2}",
+    re.I)
 
 
 def _is_read_only(command):
-    return bool(READ_ONLY.search(command)) and not CHANGES.search(command) \
-        and not SMUGGLE.search(command)
+    if SMUGGLE.search(command):
+        return False
+    # `netsh` also changes Wi-Fi settings, but these two forms only list status/profile names.
+    if NETSH_STATUS.fullmatch(command):
+        return True
+    return bool(READ_ONLY.search(command)) and not CHANGES.search(command)
+
+
+def _powershell_needs_confirmation(command):
+    """Only high-impact PowerShell actions wait for a separate spoken yes."""
+    return bool(POWERSHELL_CRITICAL.search(command))
 
 
 def _execute(command):
@@ -84,16 +112,16 @@ def _execute(command):
 
 def run_powershell(command):
     """Run PowerShell on this machine — the escape hatch for services, processes, network
-    config, registry, scheduled tasks, installed packages and hardware. Read-only commands
-    (Get-*, ipconfig, systeminfo, tasklist, ping, dir) run at once and return their output;
-    anything that writes, deletes, installs or reconfigures comes back asking first. Prefer a
-    purpose-built tool when one fits."""
+    config, registry, scheduled tasks, installed packages and hardware. Routine commands run
+    immediately; destructive, security-sensitive, install, power and credential-revealing
+    commands are parked only while confirmations are on; all-access mode (the default) runs
+    them. Prefer a purpose-built tool when one fits."""
     command = command.strip()
     if not command:
         return "No command given."
-    if _is_read_only(command):
-        return _execute(command)
-    return _park(f"run this PowerShell: {command}", lambda: _execute(command))
+    if _powershell_needs_confirmation(command):
+        return _park(f"run this PowerShell: {command}", lambda: _execute(command))
+    return _execute(command)
 
 
 HOME = os.path.expanduser("~")
@@ -122,12 +150,23 @@ BASH_CHANGES = re.compile(
 # 2>/dev/null and 2>&1 are noise suppression, not a second hidden command
 _STDERR_NOISE = re.compile(r"2>\s*(?:/dev/null|&1)")
 BASH_SMUGGLE = re.compile(r"[;>&`]|\$\(")
+BASH_CRITICAL = re.compile(
+    r"\b(?:rm|rmdir|shred|truncate|dd|mkfs|fdisk|parted|chmod|chown|chgrp|"
+    r"shutdown|reboot|halt|sudo|mount|umount|npm|pip|apt|yum|brew|choco|winget|"
+    r"curl\s+[^|]*\|\s*(?:ba)?sh|wget\s+[^|]*\|\s*(?:ba)?sh)\b|"
+    r"\bgit\s+(?:reset\s+--hard|clean|push)\b|-{1,2}delete\b|>{1,2}|\btee\b",
+    re.I)
 
 
 def _is_plain_read(command):
     stripped = _STDERR_NOISE.sub("", command)
     return (bool(BASH_READS.search(stripped)) and not BASH_CHANGES.search(stripped)
             and not BASH_SMUGGLE.search(stripped))
+
+
+def _bash_needs_confirmation(command):
+    """Only high-impact Bash actions wait for a separate spoken yes."""
+    return bool(BASH_CRITICAL.search(command))
 
 
 @lru_cache(maxsize=1)
@@ -164,16 +203,18 @@ def run_bash(command, folder=""):
     """Search the file system with find, grep, ls, wc, du, sort and pipes. This is how you
     look for files by name, pattern or CONTENT, across any file type — find_files only knows
     music, video, image and document files. folder: where to search from, a Windows path like
-    D:/Codes works, defaults to home; C:/Users/... and /c/Users/... both work. Reading runs at
-    once; removing, moving, copying or downloading comes back asking first."""
+    D:/Codes works, defaults to home; C:/Users/... and /c/Users/... both work. Routine commands
+    run at once; destructive, privilege-changing, or installation commands are parked only while
+    confirmations are on; all-access mode (the default) runs them. Prefer a purpose-built tool
+    when one fits."""
     command = command.strip()
     if not command:
         return "No command given."
     where = folder.strip() or HOME
-    if _is_plain_read(command):
-        return _execute_bash(command, where)
-    return _park(f"run this in bash, under {where}: {command}",
-                 lambda: _execute_bash(command, where))
+    if _bash_needs_confirmation(command):
+        return _park(f"run this in bash, under {where}: {command}",
+                     lambda: _execute_bash(command, where))
+    return _execute_bash(command, where)
 
 
 def _execute_python(code):
@@ -193,11 +234,12 @@ def run_python(code):
     """Run Python on this machine and read back what it prints. For inspecting or diagnosing
     anything no other tool covers. Runs inside Wilco's own folder, so it can import and use
     windows.system, windows.apps, windows.shell and mcp_tool.ui directly. You MUST print()
-    what you want to see. Read-only code runs at once; anything that writes, deletes,
-    installs, sends or drives the keyboard comes back asking first."""
+    what you want to see. Routine code runs at once; data-destructive, install, outbound, or
+    arbitrary child-process code is parked only while confirmations are on;
+    all-access mode (the default) runs it."""
     code = code.strip()
     if not code:
         return "No code given."
-    if not PY_MUTATES.search(code):
-        return _execute_python(code)
-    return _park(f"run this Python: {code}", lambda: _execute_python(code))
+    if PY_CRITICAL.search(code):
+        return _park(f"run this Python: {code}", lambda: _execute_python(code))
+    return _execute_python(code)

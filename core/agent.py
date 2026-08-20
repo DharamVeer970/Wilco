@@ -11,20 +11,66 @@ import re
 import time
 
 import mcp_tool
-from config import EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, TOOL_LIMIT, chat_model
+from config import (EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, TOOL_LIMIT, MEMORY_ENABLED,
+                    MEMORY_TURNS, chat_model)
 from core import roman
 from core.brain import PROMPTS, llm
 from core.analytics import record_tool_call
+from core.memory import add_conversation_turn, get_recent_conversations
 from core.learning import (record_correction, correction_prompt_snippet,
                            is_correction, FEEDBACK_ENABLED)
 from core.retry import retry_call
 from core import ux as _ux
 from core import batch as _batch
+from windows import voice
 from windows.speech import speak
 
 SYSTEM_PROMPT = (PROMPTS / "agent.txt").read_text(encoding="utf-8").strip()
 
 history = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+
+def _restore_memory():
+    """Restore a bounded, opt-in local conversation context without replaying tool calls."""
+    if not MEMORY_ENABLED or not MEMORY_TURNS:
+        return
+    for turn in get_recent_conversations(MEMORY_TURNS):
+        user_text = turn.get("user")
+        reply = turn.get("assistant")
+        if isinstance(user_text, str) and user_text and isinstance(reply, str) and reply:
+            history.extend((
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": reply},
+            ))
+
+
+def _persist_turn(user_text, reply, tools=()):
+    """Persist a completed exchange only when the user explicitly enabled local memory."""
+    if MEMORY_ENABLED and user_text and reply:
+        add_conversation_turn(user_text, reply, [name for name, _ in tools])
+
+
+_restore_memory()
+
+
+def _refresh_prompt():
+    """Use prompt edits on the next turn instead of requiring an app restart."""
+    global SYSTEM_PROMPT
+    latest = (PROMPTS / "agent.txt").read_text(encoding="utf-8").strip()
+    if latest != SYSTEM_PROMPT:
+        SYSTEM_PROMPT = latest
+        history[0] = {"role": "system", "content": SYSTEM_PROMPT}
+
+
+def remember_local_turn(user_text, result):
+    """Keep an instant command available when a later turn needs AI reasoning."""
+    _repair()
+    history.extend((
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "content": result},
+    ))
+    _persist_turn(user_text, result)
+    _trim()
 
 # Everything below is spoken aloud, so anything that reads like machinery has to go. The model
 # sometimes writes its tool calls out as ordinary text, or narrates what it is about to do;
@@ -70,8 +116,10 @@ def _speakable(text):
 # than a language problem. Converting it is a lookup table, so core/roman.py does it here
 # instead of spending an API call — a third of the month's quota, for a Hindi speaker.
 def _romanise(text):
-    """Rewrite non-Latin script into Latin letters so the voice can actually say it."""
+    """Keep Hindi script for Hindi neural voices; transliterate it for other voices."""
     if not roman.has_devanagari(text):
+        return text
+    if voice.current()[1].startswith("hi-IN-"):
         return text
     return roman.romanise(text)
 
@@ -207,7 +255,8 @@ def _turn_failed(checkpoint, acted, error):
 def _run_calls(calls):
     """Execute the assistant's tool calls, recording analytics for each."""
     results = []
-    for call in calls:
+    parked = False
+    for index, call in enumerate(calls):
         start_time = time.time()
         try:
             arguments = json.loads(call.function.arguments or "{}")
@@ -230,7 +279,17 @@ def _run_calls(calls):
             result = result[:_TOOL_RESULT_MAX] + "\n…(rest trimmed to keep responses fast)"
         history.append({"role": "tool", "tool_call_id": call.id, "content": result})
         results.append((call.function.name, result))
-    return results
+        if result.startswith("NOT DONE"):
+            # A model must not confirm an action it just parked. Still reply to every tool
+            # call in this batch so the next user turn has valid API conversation history.
+            parked = True
+            for skipped in calls[index + 1:]:
+                history.append({
+                    "role": "tool", "tool_call_id": skipped.id,
+                    "content": "Skipped: a previous action is awaiting the user's explicit confirmation.",
+                })
+            break
+    return results, parked
 
 
 def _run_written(written):
@@ -285,6 +344,8 @@ def respond(text, already_done=()):
     already_done names parts of the sentence the instant path has carried out, so a compound
     command handed over halfway does not get its first half run a second time.
     """
+    _refresh_prompt()
+    user_text = text
     # Learning: remember corrections like "always X" / "not that, the other one" so later
     # turns behave differently (no-op unless WILCO_FEEDBACK_ENABLED=1).
     if is_correction(text):
@@ -316,14 +377,20 @@ def respond(text, already_done=()):
         if message.tool_calls:
             for _c in message.tool_calls:
                 goal_tracker.add_goal(_c.function.name)
-            turn_tools.extend(_run_calls(message.tool_calls))
-            for _i in range(len(message.tool_calls)):
+            results, parked = _run_calls(message.tool_calls)
+            turn_tools.extend(results)
+            for _i in range(len(results)):
                 goal_tracker.complete(_i)
             acted = True
+            if parked:
+                speak("That action is waiting for your confirmation. Say yes to continue or no to cancel.")
+                _trim()
+                return
             continue
 
         outcome = _no_calls(message, acted, nudged, turn_tools)
         if outcome == "spoke":
+            _persist_turn(user_text, _romanise(_speakable(message.content)) or "Done.", turn_tools)
             _trim()
             return
         acted = acted or outcome == "ran"
@@ -333,7 +400,9 @@ def respond(text, already_done=()):
     # _no_calls returns "spoke" when there are no tool calls and we should speak the result
     # If we get here, the loop completed without hitting "spoke", meaning we need the fallback
     if outcome != "spoke":
-        speak("That turned into more steps than I expected, so I've stopped. What were you after?")
+        reply = "That turned into more steps than I expected, so I've stopped. What were you after?"
+        speak(reply)
+        _persist_turn(user_text, reply, turn_tools)
     _trim()
 
 

@@ -28,7 +28,9 @@ CRITICAL = {"csrss", "winlogon", "wininit", "services", "lsass", "smss", "system
 def run(cmd, timeout=TIMEOUT):
     """Run a command and return its text output, or '' if it fails."""
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True,
+        # Some Windows utilities emit bytes outside the active ANSI code page. Replacing
+        # only undecodable bytes keeps the useful output instead of crashing the reader.
+        done = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
                               timeout=timeout, creationflags=NO_WINDOW)
         return (done.stdout or done.stderr).strip()
     except (subprocess.SubprocessError, OSError):
@@ -54,6 +56,27 @@ def wifi_status():
     if ssid:
         return f"connected to {ssid.group(1).strip()} at {signal.group(1) if signal else 'unknown'} signal"
     return state.group(1).strip()
+
+
+def wifi_password(name=""):
+    """The Wi-Fi password of the current network (or a named profile's), via key=clear.
+
+    Asking for this out loud is enough — in all-access mode the password is spoken
+    back directly; the phrasing "wifi password", "password of my wifi" or "tell me
+    the wifi password" all resolve here so you can read it to connect another device.
+    Returns None when the adapter is off, the profile isn't found, or Windows refuses.
+    """
+    profile = name.strip().strip('"').strip("'") if name and name.strip() else ""
+    if not profile:
+        out = run(["netsh", "wlan", "show", "interfaces"])
+        found = re.search(r"^[ \t]*SSID[ \t]*:[ \t]*(\S.*)$", out, re.M)
+        if not found:
+            return None
+        profile = found.group(1).strip()
+    out = run(["netsh", "wlan", "show", "profile", f"name={profile}", "key=clear"],
+              timeout=20)
+    key = re.search(r"^[ \t]*Key Content[ \t]*:[ \t]*(\S.*)$", out, re.M)
+    return key.group(1).strip() if key else None
 
 
 def running_apps(limit=8):

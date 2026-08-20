@@ -20,7 +20,7 @@ except ImportError:
     sd = None
 
 import config
-from config import stt_api_key, stt_base_url, stt_model, stt_transport
+from config import stt_api_key, stt_base_url, stt_language, stt_model, stt_transport
 from windows.voice import speak
 
 r = sr.Recognizer()
@@ -64,7 +64,8 @@ def _transcribe_openai_compatible(wav_data):
         f"{stt_base_url}/audio/transcriptions",
         headers={"Authorization": f"Bearer {stt_api_key}"},
         files={"file": ("speech.wav", wav_data, "audio/wav")},
-        data={"model": stt_model, "response_format": "json"},
+        data={"model": stt_model, "response_format": "json",
+              **({"language": stt_language} if stt_language else {})},
         timeout=30,
     )
     if not response.ok:
@@ -100,12 +101,18 @@ def _transcribe_openrouter(wav_data):
     return text
 
 
+def _transcribe_hf(audio):
+    """Ask the Hugging Face Inference API for text, pinned to the configured language when set."""
+    kwargs = {"language": stt_language} if stt_language else {}
+    return hf.automatic_speech_recognition(audio, model=stt_model, **kwargs).text
+
+
 def _transcribe(wav_data):
     """Use the selected provider while keeping the microphone loop provider-neutral."""
     transports = {
         "openai": _transcribe_openai_compatible,
         "openrouter": _transcribe_openrouter,
-        "huggingface": lambda audio: hf.automatic_speech_recognition(audio, model=stt_model).text,
+        "huggingface": _transcribe_hf,
     }
     return transports[stt_transport](wav_data)
 

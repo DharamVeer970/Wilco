@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-77-6E56CF" alt="77 tools">
+  <img src="https://img.shields.io/badge/tools-86-6E56CF" alt="86 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -15,7 +15,7 @@
 ---
 
 Wilco listens on the mic, transcribes with Whisper, and either fires a local command instantly
-or hands the utterance to an agent that can call **77 tools** — apps, files, folders, volume,
+or hands the utterance to an agent that can call **86 tools** — apps, files, folders, volume,
 brightness, media, Windows settings, the controls inside any window, web search, YouTube, and
 PowerShell. Replies are spoken back in a neural voice — thirteen voice packs, switchable by
 voice mid-conversation, at whatever pace you ask for.
@@ -109,6 +109,7 @@ supported Windows Python versions, including Python 3.14.
 | "check for updates" / "are there updates" | Read-only Windows update check |
 | "find every python file mentioning api_key" | grep across files, any type |
 | "search my files for password" | Offline content search — finds files that contain the text |
+| "what is the wifi password" | Reads the saved Wi-Fi password so you can share it with another device |
 | "what's taking up space in downloads" | find / du / sort through real files |
 | "open D:/Codes" / "open the directory C:/Users/me" | Opens a directory by its full path |
 | "what drives do I have" / "list drives" | Lists drives with free space |
@@ -116,8 +117,10 @@ supported Windows Python versions, including Python 3.14.
 | "what can you do" | Lists its own tools by area |
 | "are you working properly" | Parses every file, checks the gates, and really creates/edits a throwaway file to prove the tools work |
 | "read my notes file" | Reads any text file back |
-| "change the port to 9090 in config" | Says how many places, then waits for yes |
-| "shut down" / "restart" | Asks first, then does it |
+| "change the port to 9090 in config" | Edits immediately (all-access); keeps a .bak so it can be undone |
+| "work on my project at D:/Codes/MyApp" | Sets that project as Wilco's active voice-development workspace |
+| "inspect my project" / "find and fix the failing test" | Inspects real files and test output, then verifies the fix |
+| "shut down" / "restart" | Executes immediately (all-access) |
 | "reset chat" / "start over" | Clears the conversation and the context |
 | "wilco quit" | Exits |
 | anything else | The agent — acts, answers, or just talks |
@@ -184,14 +187,15 @@ of a false claim of success.
 These do **not** run when the tool is called. They come back asking, and only run when you say
 yes out loud:
 
-- deleting a file (always to the recycle bin, never a hard delete)
-- emptying the recycle bin
+- deleting a file (always to the recycle bin, never a hard delete) and emptying the recycle bin
 - shutdown, restart, sleep
-- any PowerShell that writes, deletes, installs or reconfigures
+- any PowerShell / Bash / Python that writes, deletes, installs, reconfigures, or smuggles a
+  second command behind `;`, `>` or `&&` — even if the first half looks harmless
 - sending an email or a WhatsApp — recipient and full text are read back first, because a
-  sent message is the one thing here that cannot be taken back
-- writing to or editing a file — it says how many places would change first, and keeps
-  the previous version as a `.bak`
+  sent message is the one thing that cannot be taken back
+- writing to or editing a file — it says how many places would change, and keeps the previous
+  version as a `.bak`
+- revealing a saved Wi-Fi password
 
 A reply is read three ways, not two. A clear yes runs it, a clear no cancels it, and anything
 else — a half-heard word, background noise, "thank you" — asks again rather than cancelling.
@@ -221,7 +225,7 @@ machine on its own.
 
 ## Use it as an MCP server
 
-The same 77 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+The same 86 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
 so Claude Desktop, Claude Code or any MCP client can drive this machine.
 
 ```jsonc
@@ -240,7 +244,7 @@ written for the voice loop appears over MCP with no extra work:
 
 ```
 main.py ──────┐
-              ├──> mcp_tool.REGISTRY ──> 77 tools
+              ├──> mcp_tool.REGISTRY ──> 86 tools
 mcp_server.py ┘
 ```
 
@@ -298,6 +302,7 @@ restart, done. `.env.example` lists all of them with their defaults.
 | `WILCO_PLATFORM` | `cohere` | openai, anthropic, cohere, huggingface, groq, openrouter, nvidia, ollama (change WILCO_CHAT_MODEL to match) |
 | `WILCO_CHAT_MODEL` | `command-a-03-2025` | The model on that provider (can be provider-specific, e.g. nvidia/llama-3.3-nemotron-super-49b-v1.5) |
 | `WILCO_STT_MODEL` | `openai/whisper-large-v3` | Which Whisper does the listening |
+| `WILCO_STT_LANGUAGE` | blank | Optional ISO language code, e.g. `hi` for Hindi/Hinglish; blank auto-detects |
 | `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
 | `WILCO_MIN_PHRASE` / `WILCO_MAX_PHRASE` | `0.4` / `45` | Shortest and longest utterance |
 | `WILCO_LISTEN_TIMEOUT` | `8` | Give up waiting for you to start talking |
@@ -305,7 +310,7 @@ restart, done. `.env.example` lists all of them with their defaults.
 | `WILCO_SPEED` | `25` | Talking pace, percent on top of that voice's own |
 | `WILCO_SPEED_STEP` | `15` | How far "talk faster" moves it |
 | `WILCO_MAX_STEPS` / `WILCO_MAX_MESSAGES` | `6` / `24` | Tool rounds per turn, conversation kept |
-| `WILCO_TOOL_LIMIT` | `24` | Compact tool schemas the model sees per turn (`0` = all 77) |
+| `WILCO_TOOL_LIMIT` | `24` | Compact tool schemas the model sees per turn (`0` = all 85) |
 | `WILCO_FUZZ_MIN` | `70` | How close a spoken name must be to count as a match |
 | `WILCO_FAST_WORDS` | `9` | Longer than this goes to the agent, not the regex path |
 | `WILCO_SHELL_TIMEOUT` | `25` | Seconds before a shell command is given up on |

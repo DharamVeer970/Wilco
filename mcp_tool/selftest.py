@@ -24,7 +24,7 @@ SAFE_SAMPLES = {
     "python": ["print(sum(range(10)))", "import windows.apps as ap; print(ap.index())"],
 }
 RISKY_SAMPLES = {
-    "powershell": ["Remove-Item C:\\x -Recurse", "Stop-Service spooler", "Get-Date > out.txt"],
+    "powershell": ["Remove-Item C:\\x -Recurse", "Clear-Disk -Number 1", "Get-Date > out.txt"],
     "bash": ["rm -rf /c/Users", "find . -name '*.tmp' -delete", "ls; rm -rf x"],
     "python": ['import os; os.remove("x")', 'open("f","w").write("x")', "import shutil; shutil.rmtree('d')"],
 }
@@ -59,32 +59,36 @@ def _python_files():
 
 
 def _round_trip():
-    """Really create, read, edit, confirm and back up a file — in a temp folder that is
-    deleted afterwards. Classifying a command correctly is not the same as the tool working,
-    and only one of those two things was being checked before.
+    """Really create, read, edit, and back up a file in a temp folder that is deleted
+    afterwards. All-access mode is exercised too: edits still apply and keep a .bak,
+    just without the confirm-yes round.
     """
     from mcp_tool import gate, pc
+    from config import ALWAYS_ACT
 
-    # The user may have a real action waiting on a spoken yes. This test calls confirm_yes,
-    # which would otherwise fire THEIR pending action — so theirs is lifted out first and put
-    # back afterwards, whatever happens in between.
     key = gate.session.get()
     theirs = gate._pending.pop(key, None)
     problems, folder = [], tempfile.mkdtemp(prefix="wilco-check-")
     try:
         path = os.path.join(folder, "check.txt")
-        Path(path).write_text("port = 8080\nname = wilco\n", encoding="utf-8")
+        Path(path).write_text("port = 8080" + chr(10) + "name = wilco" + chr(10), encoding="utf-8")
 
         if "8080" not in pc.read_file(path):
             problems.append("read_file didn't return the contents")
-        if not pc.edit_file(path, "8080", "9090").startswith("NOT DONE"):
-            problems.append("edit_file did not stop to ask")
-        if "8080" not in Path(path).read_text(encoding="utf-8"):
-            problems.append("edit_file wrote to disk before being confirmed")
-
-        gate.confirm_yes()
-        if "9090" not in Path(path).read_text(encoding="utf-8"):
-            problems.append("confirming an edit did not apply it")
+        result = pc.edit_file(path, "8080", "9090")
+        if ALWAYS_ACT:
+            if result.startswith("NOT DONE"):
+                problems.append("edit_file parked in all-access mode")
+            if "9090" not in Path(path).read_text(encoding="utf-8"):
+                problems.append("edit_file didn't apply the change in all-access mode")
+        else:
+            if not result.startswith("NOT DONE"):
+                problems.append("edit_file did not stop to ask")
+            if "8080" not in Path(path).read_text(encoding="utf-8"):
+                problems.append("edit_file wrote to disk before being confirmed")
+            gate.confirm_yes()
+            if "9090" not in Path(path).read_text(encoding="utf-8"):
+                problems.append("confirming an edit did not apply it")
         if not os.path.isfile(path + ".bak"):
             problems.append("no .bak backup was kept")
         if "doesn't contain" not in pc.edit_file(path, "zzz-absent", "x"):
@@ -92,24 +96,24 @@ def _round_trip():
     except Exception as e:
         problems.append(f"{type(e).__name__}: {e}")
     finally:
-        gate._pending.pop(key, None)          # drop anything this test parked
+        gate._pending.pop(key, None)
         if theirs is not None:
-            gate._pending[key] = theirs       # and hand the user's back untouched
+            gate._pending[key] = theirs
         shutil.rmtree(folder, ignore_errors=True)
     return problems
 
 
 def _gates_hold():
-    """Do the read/write classifiers still sort the samples correctly?"""
+    """Do the critical-action classifiers still sort the samples correctly?"""
     from mcp_tool import shell_tool
 
-    tests = [("powershell", shell_tool._is_read_only),
-             ("bash", shell_tool._is_plain_read),
-             ("python", lambda c: not shell_tool.PY_MUTATES.search(c))]
+    tests = [("powershell", shell_tool._powershell_needs_confirmation),
+             ("bash", shell_tool._bash_needs_confirmation),
+             ("python", lambda c: bool(shell_tool.PY_CRITICAL.search(c)))]
     wrong = []
-    for label, is_safe in tests:
-        wrong += [f"{label}:{c}" for c in SAFE_SAMPLES[label] if not is_safe(c)]
-        wrong += [f"{label}:{c}" for c in RISKY_SAMPLES[label] if is_safe(c)]
+    for label, is_critical in tests:
+        wrong += [f"{label}:{c}" for c in SAFE_SAMPLES[label] if is_critical(c)]
+        wrong += [f"{label}:{c}" for c in RISKY_SAMPLES[label] if not is_critical(c)]
     return wrong
 
 

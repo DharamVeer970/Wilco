@@ -1,4 +1,3 @@
-# Core dependencies
 openai>=0.27.8  
 huggingface-hub>=0.35.3
 speechrecognition>=3.8.1  

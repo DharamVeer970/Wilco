@@ -85,6 +85,9 @@ stt_transport = _text("WILCO_STT_TRANSPORT", _stt_defaults.get("transport", "ope
 stt_base_url = _text("WILCO_STT_BASE_URL", _stt_defaults.get("base_url", "")).rstrip("/")
 stt_key_env = _text("WILCO_STT_KEY_ENV", _stt_defaults.get("key_env", ""))
 stt_model = _text("WILCO_STT_MODEL", _stt_defaults.get("model", ""))
+# Leave blank for automatic detection. Set this to an ISO-639-1 code such as "hi" when
+# Whisper repeatedly mistakes a multilingual speaker for another language.
+stt_language = _text("WILCO_STT_LANGUAGE", "").lower()
 
 if platform not in PLATFORMS:
     raise SystemExit(f"WILCO_PLATFORM={platform!r} is not one of: {', '.join(PLATFORMS)}")
@@ -111,6 +114,10 @@ EMPTY_TRIES = _number("WILCO_EMPTY_TRIES", 3, int)
 LLM_TIMEOUT = _number("WILCO_LLM_TIMEOUT", 30)
 # how many compact tool schemas the model sees each turn (0 = all of them, no routing)
 TOOL_LIMIT = _number("WILCO_TOOL_LIMIT", 24, int)
+# Opt-in only: conversation text is personal data. When enabled, the last completed turns
+# are saved locally and restored into a new session as short-term continuity context.
+MEMORY_ENABLED = _flag("WILCO_MEMORY_ENABLED", False)
+MEMORY_TURNS = max(0, _number("WILCO_MEMORY_TURNS", 6, int))
 
 # ----------------------------------------------------------------- listening
 PAUSE_SECONDS = _number("WILCO_PAUSE", 2.5)
@@ -135,6 +142,10 @@ FAST_WORDS = _number("WILCO_FAST_WORDS", 9, int)
 LIST_LIMIT = _number("WILCO_LIST_LIMIT", 40, int)
 MAX_CONTROLS = _number("WILCO_MAX_CONTROLS", 300, int)
 ASK_WHAT_NEXT = _flag("WILCO_ASK_WHAT_NEXT", False)
+# All-access mode: every command executes immediately, no "are you sure?" questions — Wi-Fi
+# passwords, sends, edits, installs and shutdown included. The command is the permission.
+# Set WILCO_ALWAYS_ACT=0 in .env to restore the confirmation gate.
+ALWAYS_ACT = _flag("WILCO_ALWAYS_ACT", True)
 
 # ----------------------------------------------------------------- running things
 SHELL_TIMEOUT = _number("WILCO_SHELL_TIMEOUT", 25, int)

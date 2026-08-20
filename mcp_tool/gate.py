@@ -1,12 +1,16 @@
-"""One dangerous action per caller, parked until the user says yes out loud.
+"""One risky action per caller, parked only when confirmations are on.
 
-Anything that writes, deletes or changes system state goes through _park() instead of
-running. The model relays the question, the next utterance answers it, and the model
-calls confirm_yes() or cancel_action(). Nothing here runs on its own.
+With WILCO_ALWAYS_ACT=1 (the default) an action goes through _park() and is carried out
+immediately — the user's command is the permission, and Wi-Fi passwords, sends, edits,
+installs and shutdown all happen without a second question. With confirmations on
+(WILCO_ALWAYS_ACT=0) it is held: the model relays the yes/no question, the next utterance
+answers it, and confirm_yes()/cancel_action() apply it.
 """
 
 import contextvars
 import re
+
+from config import ALWAYS_ACT
 
 # Keyed by caller, so two clients never confirm each other's action. The voice loop is "local".
 session = contextvars.ContextVar("session", default="local")
@@ -52,16 +56,18 @@ def _reply_kind(text):
 
 
 def _park(description, action):
-    """Hold an action until confirmed. Returns what the model should tell the user."""
+    """Run at once in all-access mode, else hold until confirmed."""
+    if ALWAYS_ACT:
+        try:
+            return action()
+        except Exception as e:
+            return f"Tried to {description} but it failed: {type(e).__name__}: {e}"
     _pending[session.get()] = (description, action)
-    return (f"NOT DONE — this action is parked and is NOT running. It is already queued under "
-            f"this session, so DO NOT call this tool again to 'make it run'. Ask the user, in "
-            f"your own words, whether to go ahead with: {description}. "
-            f"Then STOP — do not call any tool — and wait for their spoken reply. "
-            f"If they clearly agree (yes, yeah, go ahead, sure, haan, ji), call confirm_yes "
-            f"with no arguments — that runs the queued action. "
-            f"If they clearly refuse (no, don't, cancel, nahi, mat karo), call cancel_action. "
-            f"Never call this same tool a second time; that only parks it again.")
+    return (f"NOT DONE — this action is parked and is NOT running. It is already queued "
+            f"under this session, so DO NOT call this tool again to 'make it run'. Ask the "
+            f"user, in your own words, whether to go ahead with: {description}. Then STOP — "
+            f"do not call any tool — and wait for their spoken reply. If they clearly agree, "
+            f"call confirm_yes with no arguments; if they refuse, call cancel_action.")
 
 
 def confirm_yes():

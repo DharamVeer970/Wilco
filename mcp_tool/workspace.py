@@ -25,6 +25,62 @@ from mcp_tool.gate import _park
 
 PROJECT = Path(__file__).resolve().parent.parent
 _PIN = re.compile(r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)")
+_active_project = PROJECT
+
+
+def _project(folder=""):
+    """Resolve an explicitly named project, or the voice-selected project for this session."""
+    candidate = Path(folder).expanduser() if folder and folder.strip() else _active_project
+    return candidate.resolve() if candidate.is_dir() else None
+
+
+def current_project_dir():
+    """The folder Wilco currently works in, as text — the voice-selected project, or Wilco's
+    own folder before any project is chosen. Never a hardcoded location."""
+    return str(_active_project)
+
+
+def select_project(folder):
+    """Set the project Wilco works on for this voice session. Pass a full folder path, for
+    example D:/Codes/MyApp. Afterwards 'inspect my project', 'run tests', and 'check
+    requirements' use it by default. This only changes Wilco's temporary working scope; it
+    does not modify any project file."""
+    global _active_project
+    chosen = Path(folder).expanduser()
+    if not chosen.is_dir():
+        return f"There's no project folder at {chosen}."
+    _active_project = chosen.resolve()
+    return f"Working project set to {_active_project}."
+
+
+def inspect_project(folder=""):
+    """Inspect a project before changing it. Reports its folder, detected language/build
+    files, Git state, and likely test command. folder is optional after select_project."""
+    project = _project(folder)
+    if project is None:
+        return f"There's no project folder at {folder}."
+    markers = {
+        "Python": ("pyproject.toml", "requirements.txt", "setup.py"),
+        "Node": ("package.json",), "Java": ("pom.xml", "build.gradle"),
+        ".NET": ("*.sln", "*.csproj"), "Rust": ("Cargo.toml",),
+        "Go": ("go.mod",),
+    }
+    detected = [name for name, names in markers.items()
+                if any(project.glob(item) for item in names)]
+    files = [p.name for p in project.iterdir() if p.is_file()][:20]
+    git = "not a Git repository"
+    if (project / ".git").exists():
+        try:
+            done = subprocess.run(["git", "status", "--short"], capture_output=True,
+                                  text=True, timeout=15, cwd=project,
+                                  creationflags=shell.NO_WINDOW, encoding="utf-8", errors="replace")
+            changes = (done.stdout or "").strip().splitlines()
+            git = "clean" if not changes else f"{len(changes)} changed file(s): " + "; ".join(changes[:8])
+        except (OSError, subprocess.SubprocessError):
+            git = "Git state unavailable"
+    test_hint = "npm test" if (project / "package.json").is_file() else "python -m pytest -q"
+    return (f"Project: {project}. Type: {', '.join(detected) or 'not recognised'}. "
+            f"Git: {git}. Suggested tests: {test_hint}. Top-level files: {', '.join(files) or 'none'}.")
 
 
 def _norm(name):
@@ -85,7 +141,14 @@ def _v(pkg, spec):
 
 def _resolve_req(path):
     """The requirements file to act on: a real file wins, otherwise a folder is searched."""
-    p = Path(path).expanduser() if path and path.strip() else PROJECT / "requirements.txt"
+    supplied = Path(path).expanduser() if path and path.strip() else None
+    if supplied and supplied.is_file():
+        p = supplied
+    else:
+        base = _project(path) if supplied else _active_project
+        if base is None:
+            return None
+        p = base / "requirements.txt"
     if p.is_file():
         return p
     if p.is_dir():
@@ -170,9 +233,9 @@ def run_tests(folder="", runner=""):
     unittest discover, in the given folder (default Wilco's own). This is how to check a code
     change works without asking the user to run anything — run it after an edit and report the
     pass/fail numbers. runner: 'pytest' or 'unittest' to force one."""
-    where = Path(folder).expanduser() if folder and folder.strip() else PROJECT
-    if not where.is_dir():
-        return f"There's no folder at {where}."
+    where = _project(folder)
+    if where is None:
+        return f"There's no folder at {folder}."
     python = sys.executable or "python"
     command = [python, "-m", "pytest", "-q"] if runner != "unittest" else [python, "-m", "unittest"]
     if runner not in ("pytest", "unittest"):

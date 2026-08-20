@@ -17,7 +17,7 @@ import windows.browser as browsers
 import windows.files as files
 import windows.shell as shell
 import windows.system as system
-from config import MAX_OUTPUT, TEXT_LIMIT
+from config import ALWAYS_ACT, MAX_OUTPUT, TEXT_LIMIT
 from core import context
 from mcp_tool.gate import _park
 
@@ -446,11 +446,96 @@ def _resolve(path):
     return os.path.abspath(path)
 
 
+# A bare file name without an extension gets one only from unmistakable code markers,
+# never from generic words — so prose like "let's go" or "some text" is never turned into
+# .go or .txt, and no single location or language is hardcoded. A full path or an explicit
+# extension always wins and is never guessed. Order matters: most specific first.
+_CODE_PATTERNS = [
+    (".py",    r"(?m)^\s*(?:import\s+\w+|from\s+\w+\s+import|def\s+\w+\s*\(|class\s+\w+\s*:)"),
+    (".ts",    r"(?m)\b(?:interface|type)\s+\w+[:,]|:\s*(?:string|number|boolean|any|unknown)\b"),
+    (".js",    r"(?m)\b(?:const|let|var)\s+\w+\s*=|console\.log\(|=>\s*\{|require\s*\("),
+    (".cs",   r"(?m)\busing\s+System(?:\.|;\s*)?|Console\.|static\s+void\s+Main"),
+    (".java",  r"(?m)\b(?:public|private|protected)\s+(?:static\s+)?(?:class|interface|void|int|String)\b|(?:^|[\s;}])(?:class|interface)\s+\w+\s*\{"),
+    (".go",    r"(?m)^\s*package\s+\w+\s*$|\bfunc\s+\w+\s*\("),
+    (".rs",    r"(?m)^\s*(?:fn\s+\w+\s*\(|use\s+[\w:]+::|let\s+(?:mut\s+)?\w+)"),
+    (".cpp",   r"(?m)(?:#\s*include\s*<iostream>|\bstd\s*::|using\s+namespace\s+\w+)"),
+    (".c",     r"(?m)(?:\bint\s+main\s*\(|#\s*include\s*<[\w.]+>)"),
+    (".php",   r"(?m)<\?php"),
+    (".rb",    r"(?m)^\s*(?:def\s+\w+|require\s+['\"]\w+|puts\s+['\"]|class\s+\w+\s*$)"),
+    (".pl",    r"(?m)\b(?:use\s+strict;|use\s+warnings;|my\s+\$\w+|sub\s+\w+\s*\{)"),
+    (".swift", r"(?m)^\s*(?:import\s+(?:Foundation|UIKit)\b|func\s+\w+\s*\(|struct\s+\w+\s*\{)"),
+    (".kt",    r"(?m)^\s*(?:fun\s+\w+\s*\(|class\s+\w+\s*\{|\bval\s+\w+\s*=|\bvar\s+\w+\s*=)"),
+    (".bash",  r"(?m)^\s*(?:#\s*!.*\b(?:bash|sh)\b|if\s+\[|while\s+(?:read|true)\b|echo\s+\$+\w+)"),
+    (".ps1",   r"(?m)^\s*(?:Write-Host|Get-Process|Set-Content|Export-Csv|param\s*\(|function\s+\w+\s*\{)"),
+    (".sql",   r"(?im)^\s*(?:select\b|insert\s+into|update\s+\w+|delete\s+from|create\s+table)"),
+    (".html",  r"(?mi)^\s*<(?:!DOCTYPE\s+html|html\b|body\b|head\b)>"),
+    (".css",   r"(?m)^\s*[.#][\w-]+\s*\{"),
+    (".json",  r"(?m)^\s*\{\s*\"[^\"]+\"\s*:"),
+    (".md",    r"(?m)^\s*#{1,6}\s+\S+"),
+]
+
+def _working_dir():
+    """The folder Wilco writes and reads by default: the last folder it moved to, else the
+    voice-selected project, else Wilco's own. Chosen at call time, never a hardcoded path."""
+    if context.folder:
+        return context.folder
+    from mcp_tool import workspace  # lazy: pc is imported before workspace in package load
+    return workspace.current_project_dir() or os.getcwd()
+
+
+def _infer_extension(content):
+    """A code-language extension for bare file names, or '' otherwise."""
+    for ext, pattern in _CODE_PATTERNS:
+        if re.search(pattern, content):
+            return ext
+    return ""
+
+def _resolve_write(name, text):
+    """A bare file name into a full path under Wilco's current folder, inferring a language
+    extension when the name omits one. Existing extensions and full paths are kept intact."""
+    name = (name or "").strip().strip('"')
+    if not name:
+        return ""
+    if os.path.isabs(name) or name.startswith("~") or re.match(r"^[a-zA-Z]:", name):
+        return _resolve(name)
+    work = _working_dir()
+    full = os.path.join(work, name)
+    if os.path.splitext(os.path.basename(full))[1]:
+        return full
+    ext = _infer_extension((text or "")[:600])
+    return full + ext if ext else full
+
+
+def _resolve_read(path):
+    """A file to read or edit - full paths work as given; a bare name is tried in the
+    current folder first, so write_file then read_file/edit_file line up naturally. A
+    bare name with no extension is matched against the language extensions write_file
+    would have inferred, so the same bare name lines up across write / read / edit."""
+    full = _resolve(path)
+    if os.path.isfile(full):
+        return full
+    name = (path or "").strip().strip('"')
+    if os.path.isabs(name) or name.startswith("~") or re.match(r"^[a-zA-Z]:", name):
+        return full
+    candidate = os.path.join(_working_dir(), name)
+    if os.path.isfile(candidate):
+        return candidate
+    # Bare name with no extension: write_file created it with an inferred language
+    # extension, so try the same extensions here so a bare name lines up across
+    # write / read / edit without restating the extension.
+    if not os.path.splitext(name)[1]:
+        for ext in (e for e, _ in _CODE_PATTERNS):
+            match = os.path.join(_working_dir(), name + ext)
+            if os.path.isfile(match):
+                return match
+    return full
+
+
 def read_file(path, lines=200):
     """Read a text file and return its contents — notes, code, config, logs, csv.
     path: a full path, or ~/Documents/notes.txt. lines: how many lines to read back.
     Use run_bash with grep when you need to search inside many files instead of one."""
-    full = _resolve(path)
+    full = _resolve_read(path)
     if not os.path.isfile(full):
         return f"There's no file at {full}."
     try:
@@ -484,10 +569,16 @@ def _write(full, text):
 
 
 def write_file(path, text):
-    """Create a file, or replace everything in one. ALWAYS asks the user first — this call
-    writes nothing. Say the path and roughly what is going into it before they decide.
-    The old contents are kept as a .bak file, so an overwrite can be undone."""
-    full = _resolve(path)
+    """Create a file, or replace everything in one. In all-access mode (the default) it
+    writes at once; with WILCO_ALWAYS_ACT=0 it won't write until you agree.
+    path: a bare file name (e.g. "app" or "Main") is written into the folder Wilco is
+    currently working in, and when it has no extension one is inferred from the code
+    language it names ("app" with Python -> app.py, "Main" with Java -> Main.java). A
+    full path is used as given. The old contents are kept as a .bak file, so an
+    overwrite can be undone."""
+    full = _resolve_write(path, text)
+    if not full:
+        return "Give a file name or path to write."
     what = "replace everything in" if os.path.isfile(full) else "create"
     return _park(f"{what} {full} with {len(text)} characters of text",
                  lambda: _write(full, text))
@@ -495,10 +586,10 @@ def write_file(path, text):
 
 def edit_file(path, find, replace):
     """Change some text inside a file, leaving the rest alone — fix a typo, change a setting,
-    update a value. ALWAYS asks first, and tells you how many places would change, so a
-    find-and-replace can't quietly rewrite more than expected. The old version is kept as
-    a .bak file."""
-    full = _resolve(path)
+    update a value. In all-access mode (the default) it runs at once; with
+    WILCO_ALWAYS_ACT=0 it parks and says how many places would change, so a find-and-replace
+    can't quietly rewrite more than expected. The old version is kept as a .bak file."""
+    full = _resolve_read(path)
     if not os.path.isfile(full):
         return f"There's no file at {full}."
     try:
@@ -592,9 +683,9 @@ def manage_file(action, source, destination=""):
 
 
 def delete_file(name, kind="any"):
-    """Delete a file. ALWAYS goes to the recycle bin, never a hard delete, and ALWAYS asks
-    the user to confirm first — it does not delete on this call. Relay the question, then
-    call confirm_yes only if they agree."""
+    """Delete a file. ALWAYS goes to the recycle bin, never a hard delete. In all-access mode
+    (the default) it moves it straight to the bin; with WILCO_ALWAYS_ACT=0 it parks first.
+    Relay the question, then confirm_yes only if they agree."""
     kinds = KINDS if kind in ("any", "", None) else (kind,)
     hits = [(k, n, p) for k in kinds for n, p in files.matches(k, name)]
     if not hits:
@@ -669,12 +760,31 @@ def wifi_switch(on):
     return f"Wi-Fi turned {'on' if turn_on else 'off'}."
 
 
+def wifi_password(name=""):
+    """Reveal a saved Wi-Fi password so it can be read to connect another device. name is a
+    profile/NSSID; leave it blank for the currently connected network. In all-access mode (the
+    default) the password is spoken back directly; with WILCO_ALWAYS_ACT=0 it comes back asking
+    first — a saved password is one thing that never runs without a yes unless all-access is on."""
+    if ALWAYS_ACT:
+        value = shell.wifi_password(name)
+        return f"The Wi-Fi password is {value}." if value else "Couldn't read that password."
+    return _park(f"reveal the saved Wi-Fi password for {name or 'the current network'}",
+                 lambda: shell.wifi_password(name))
+
+
+def _wifi_password_text():
+    """One netsh lookup, reworded for the 'password' system_info reader."""
+    value = shell.wifi_password()
+    return f"The Wi-Fi password is {value}." if value else "Couldn't read that password."
+
+
 def system_info(what):
-    """Read machine state. what: ip, wifi, battery, hostname, uptime, disk, or running.
-    Use this before answering anything about the state of this computer."""
+    """Read machine state. what: ip, wifi, password, battery, hostname, uptime, disk, or
+    running. Use this before answering anything about the state of this computer."""
     readers = {
         "ip": lambda: f"IP address is {shell.ip_address()}",
         "wifi": lambda: f"Wi-Fi is {shell.wifi_status()}",
+        "password": _wifi_password_text,
         "battery": lambda: f"Battery is at {shell.battery_percent()} percent",
         "hostname": lambda: f"This machine is called {shell.computer_name()}",
         "uptime": lambda: f"Running since {shell.uptime()}",
@@ -711,9 +821,9 @@ def check_windows_updates():
 
 
 def power_action(action):
-    """Shut down, restart or sleep the machine. ALWAYS asks the user to confirm first — this
-    call does not do it. Relay the question, then call confirm_yes only if they agree.
-    action: shutdown, restart, or sleep. For 'lock' use lock_screen, which is instant."""
+    """Shut down, restart or sleep the machine. In all-access mode (the default) it acts
+    at once; with WILCO_ALWAYS_ACT=0 it parks until you agree. action: shutdown, restart,
+    or sleep. For 'lock' use lock_screen, which is instant."""
     parked = {
         "shutdown": ("shut this computer down in 30 seconds", lambda: shell.shutdown(False)),
         "restart": ("restart this computer in 30 seconds", lambda: shell.shutdown(True)),
@@ -772,7 +882,8 @@ def cancel_shutdown():
 
 
 def empty_recycle_bin():
-    """Permanently empty the recycle bin. ALWAYS asks the user to confirm first — this call
-    does not do it. This one cannot be undone, so be explicit about that when you ask."""
+    """Permanently empty the recycle bin. In all-access mode (the default) it does it at
+    once; with WILCO_ALWAYS_ACT=0 it parks first. This one cannot be undone, so be explicit
+    about that when you ask."""
     return _park("permanently empty the recycle bin, which cannot be undone",
                  shell.empty_recycle_bin)

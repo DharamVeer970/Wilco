@@ -71,11 +71,10 @@ def _full_description(fn):
     return " ".join((inspect.getdoc(fn) or "").split())
 
 
-# The model gets a one-sentence summary instead of the full docstring. 77 full docstrings
-# were ~8,000 tokens of JSON on EVERY round trip — the single biggest cost in picking a
-# tool. The first sentence carries the "what it does and when to reach for it", which is
-# what the model actually needs; the full text stays available via list_my_tools and the
-# MCP server.
+# The model gets a one-sentence summary instead of the full docstring. The full set of
+# ~86 docstrings is the single biggest token cost on every round trip — the first sentence
+# carries the "what it does and when to reach for it", which is what the model actually
+# needs; the full text stays available via list_my_tools and the MCP server.
 _TOOL_DESC_MAX = 160
 
 

@@ -12,7 +12,7 @@ import windows.files as files
 from core import agent, context, online
 import windows.shell as shell
 import windows.system as system
-from config import ASK_WHAT_NEXT, LIST_LIMIT, SPEED_STEP
+from config import ALWAYS_ACT, ASK_WHAT_NEXT, LIST_LIMIT, SPEED_STEP
 from core import roman
 from core.brain import ai
 from mcp_tool import gate
@@ -234,6 +234,8 @@ def _launch(display, launch_id):
     context.app = display
     try:
         apps.launch(launch_id)
+        # A following "type ..." must land in the app we just opened, not the old window.
+        system.focus_window(display, wait=4)
     except OSError as e:
         speak(f"I couldn't open {display}. {e.strerror or 'It refused to start'}.")
     return True
@@ -323,6 +325,14 @@ def show_in_folder(kind, folder_name=None):
 
 INFO = [
     (r"\b(?:my |the )?ip(?: address)?\b", shell.ip_address, "Your I P is {}."),
+    # Asked first: "wifi password", "password of my wifi", "tell me the wifi password".
+    # In all-access mode the password is spoken back directly so the user can read it to
+    # connect another device; this entry sits ahead of the status match so the word
+    # "password" always wins over a plain "wifi is up" reply.
+    (r"\b(?:wi-?fi|network)\b[^.\n]{0,24}\bpassword\b"
+     r"|\bpassword\b[^.\n]{0,24}\b(?:wi-?fi|network)\b"
+     r"|\b(?:wi-?fi|network)\b\s+(?:key|pass)\b",
+     shell.wifi_password, "The Wi-Fi password is {}."),
     (r"\bwi-?fi\b(?!\s+(?:on|off))|\bnetwork\b", shell.wifi_status, "Wi-Fi is {}."),
     (r"\bbattery\b|\bcharge\b", shell.battery_percent, "Battery's at {} percent."),
     (r"\bcomputer(?:'s)? name\b|\bhostname\b", shell.computer_name, "This machine is called {}."),
@@ -345,6 +355,11 @@ def system_info(query):
 
 def ask_confirm(phrase, action):
     global _pending
+    if ALWAYS_ACT:
+        # All-access mode: the user already spoke the command — do it, no question.
+        action()
+        speak(f"Okay, {phrase}.")
+        return True
     _pending = ("confirm", phrase, action)
     speak(f"You sure you want me to {phrase}?")
     return True
@@ -726,6 +741,8 @@ def handle(query):
 
     if len(parts) == 1:
         result = _dispatch(query)
+        if result == "command" and not FRESH.fullmatch(_bare(query)):
+            _remember_local_command(query)
         if result == "command" and ASK_WHAT_NEXT and _pending is None:
             _next()
         return result is not False
@@ -748,8 +765,10 @@ def _run_parts(parts, query):
         # than a half-finished job being reported as a failure. What already ran is named
         # so it doesn't happen twice.
         agent.respond(query, already_done=done)
-    elif ASK_WHAT_NEXT and _pending is None:
-        _next()
+    else:
+        _remember_local_command(query)
+        if ASK_WHAT_NEXT and _pending is None:
+            _next()
     return True
 
 
@@ -872,6 +891,12 @@ QUIT = re.compile(r"(?:" + NAME + r"[ ,]*)?(?:quit|exit|goodbye|bye)")
 FRESH = re.compile(r"(?:start over|new task|forget (?:it|that|everything))")
 TYPE = re.compile(r"(?:type|write)\s+(.+)")
 TYPE_SPOKEN = re.compile(r"(?:type|write)\s+(.+)", re.I)
+CODE_WRITE = re.compile(
+    r"\b(?:python|typescript|java|javascript|go|golang|rust|swift|kotlin|c\+\+|c#|"
+    r"php|perl|lua|bash|shell|powershell|sql|html|css|vba|json)\b"
+    r"|\b(?:code|program|script|function|class|application|app|website|webpage|"
+    r"bot|automation|api|macro|algorithm)\b",
+    re.I)
 SHOW = re.compile(r"show\s+(?:me\s+)?(?:the\s+|all\s+)?(\w+)"
                   r"(?:\s+(?:in|from|inside)\s+(?:my\s+|the\s+)?([\w ]+?)(?:\s+folder)?)?$")
 IN_WINDOWS = re.compile(r"(?:search|find)\s+(?:for\s+)?(\S+(?:\s+\S+)*?)\s+(?:in|on)\s+windows$")
@@ -937,6 +962,10 @@ def _step_reset_chat(query, _spoken):
 def _step_type(query, spoken):
     m = TYPE.match(query)
     if not m or COMPOSE.search(m.group(1).strip(STRIP)):
+        return None
+    if CODE_WRITE.search(m.group(1)) or CODE_WRITE.search(query):
+        # Code requests describe what to generate, not text to type. The agent explains the
+        # plan first, writes the file, runs it to debug, then reports the real result.
         return None
     # type what was actually said, politeness and all — it's literal text
     exact = TYPE_SPOKEN.search(spoken)
@@ -1208,3 +1237,9 @@ def _dispatch(query, allow_chat=True):
     # both act and talk — so an unmatched phrasing is a conversation, not a dead end
     agent.respond(spoken)
     return "chat"
+
+
+def _remember_local_command(query):
+    """Give a later AI follow-up the outcome of an instant, non-AI command."""
+    detail = f"The active app is {context.app}." if context.app else "The local command completed."
+    agent.remember_local_turn(query, detail)

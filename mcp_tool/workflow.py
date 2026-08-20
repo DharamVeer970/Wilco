@@ -1,8 +1,9 @@
 """Coding, debugging and workflow automation — the three jobs the other tools make awkward.
 
-Three gaps, not two frameworks. run_bash has no git in its read list, so even `git status`
-had to be confirmed out loud. Nothing ran a test suite. And press_key taps one combination,
-so a sequence of them had no name to call it by.
+Two gaps, not two frameworks. run_bash has no git in its read list, so even `git status`
+had to be confirmed out loud. And press_key taps one combination, so a sequence of them had
+no name to call it by. Project test execution lives in workspace.run_tests, the one canonical
+tool for that job.
 
 A macro is a list of plain lines — "focus Notepad", "key ctrl+s", "type hello", "wait 0.5" —
 played through windows/system.py, which already sends keys, text and focus. That is the
@@ -12,7 +13,6 @@ keep in step with it.
 import json
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -83,25 +83,6 @@ def git(command, folder=""):
     if command.startswith(GIT_READS) and not GIT_DESTROYS.search(command):
         return _run(args, where, 60)
     return _park(f"run git {command} in {where}", lambda: _run(args, where, 120))
-
-
-def run_tests(folder="", target=""):
-    """Run a project's tests and read back what failed — npm test where there is a
-    package.json, pytest otherwise. This is the tool for "run my tests" and "did that break
-    anything". target: one file or test name to narrow it to. folder: the project, defaults
-    to Wilco's own."""
-    where = _folder(folder)
-    if not where:
-        return f"There's no folder at {folder}."
-    narrow = target.strip()
-    if (Path(where) / "package.json").is_file():
-        npm = shutil.which("npm")
-        if not npm:
-            return "That looks like a Node project, but npm isn't on PATH."
-        args = [npm, "test", *(["--", narrow] if narrow else [])]
-    else:
-        args = [sys.executable, "-m", "pytest", "-q", *([narrow] if narrow else [])]
-    return _run(args, where, 300)
 
 
 def _saved():
