@@ -262,8 +262,8 @@ INFO = [
     # In all-access mode the password is spoken back directly so the user can read it to
     # connect another device; this entry sits ahead of the status match so the word
     # "password" always wins over a plain "wifi is up" reply.
-    (r"\b(?:wi-?fi|network)\b[^.\n]{0,24}\bpassword\b"
-     r"|\bpassword\b[^.\n]{0,24}\b(?:wi-?fi|network)\b"
+    (r"\b(?:wi-?fi|network)\b[^.\n]{0,24}\bpassword\b" +
+     r"|\bpassword\b[^.\n]{0,24}\b(?:wi-?fi|network)\b" +
      r"|\b(?:wi-?fi|network)\b\s+(?:key|pass)\b",
      shell.wifi_password, "The Wi-Fi password is {}."),
     (r"\bwi-?fi\b(?!\s+(?:on|off))|\bnetwork\b", shell.wifi_status, "Wi-Fi is {}."),
@@ -286,7 +286,7 @@ def system_info(query):
     return None
 
 
-def ask_confirm(phrase, action):
+def ask_confirm(phrase, action):  # NOSONAR - always True = handled, not success/failure
     global _pending
     if ALWAYS_ACT:
         # All-access mode: the user already spoke the command — do it, no question.

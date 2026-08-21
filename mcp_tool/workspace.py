@@ -23,6 +23,7 @@ from config import MAX_OUTPUT, SHELL_TIMEOUT
 from mcp_tool.gate import _park
 
 PROJECT = Path(__file__).resolve().parent.parent
+REQUIREMENTS_TXT = "requirements.txt"
 _PIN = re.compile(r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)")
 _active_project = PROJECT
 
@@ -59,7 +60,7 @@ def inspect_project(folder=""):
     if project is None:
         return f"There's no project folder at {folder}."
     markers = {
-        "Python": ("pyproject.toml", "requirements.txt", "setup.py"),
+        "Python": ("pyproject.toml", REQUIREMENTS_TXT, "setup.py"),
         "Node": ("package.json",), "Java": ("pom.xml", "build.gradle"),
         ".NET": ("*.sln", "*.csproj"), "Rust": ("Cargo.toml",),
         "Go": ("go.mod",),
@@ -147,15 +148,29 @@ def _resolve_req(path):
         base = _project(path) if supplied else _active_project
         if base is None:
             return None
-        p = base / "requirements.txt"
+        p = base / REQUIREMENTS_TXT
     if p.is_file():
         return p
     if p.is_dir():
-        for candidate in (p / "requirements.txt", p / "Requirements.txt"):
+        for candidate in (p / REQUIREMENTS_TXT, p / "Requirements.txt"):
             if candidate.is_file():
                 return candidate
         return None
     return None
+
+
+def _check_single(name, spec, installed):
+    """Check one requirement, return (report_line, is_missing, is_outdated)."""
+    key = _norm(name)
+    if key in installed:
+        verdict = _v(installed[key], spec)
+        flag = " (OLDER than requested)" if verdict == -1 else ""
+        if verdict == -1:
+            return f"- {name}: installed {installed[key]}{'  wanted ' + spec if spec else ''}{flag}", False, True
+        return f"- {name}: installed {installed[key]}{'  wanted ' + spec if spec else ''}{flag}", False, False
+    return f"- {name}: MISSING" + (f"  (wanted {spec})" if spec else ""), True, False
+
+
 def check_requirements(path=""):
     """Could this project's requirements actually be satisfied here? Reads a requirements.txt
     and compares every package against what is installed, then reports which are in place,
@@ -165,7 +180,7 @@ def check_requirements(path=""):
     'is everything installed'; only install with install_requirements when they say to."""
     req = _resolve_req(path)
     if req is None:
-        return ("Couldn't find a requirements.txt to check. If it lives somewhere other than "
+        return (f"Couldn't find a {REQUIREMENTS_TXT} to check. If it lives somewhere other than "
                 "the project root, give me the folder or file path.")
     installed = _installed()
     reports, missing, outdated, listed = [], 0, 0, 0
@@ -174,16 +189,12 @@ def check_requirements(path=""):
         if not name:
             continue
         listed += 1
-        key = _norm(name)
-        if key in installed:
-            verdict = _v(installed[key], spec)
-            flag = " (OLDER than requested)" if verdict == -1 else ""
-            if verdict == -1:
-                outdated += 1
-            reports.append(f"- {name}: installed {installed[key]}{'  wanted ' + spec if spec else ''}{flag}")
-        else:
+        report, is_missing, is_outdated = _check_single(name, spec, installed)
+        reports.append(report)
+        if is_missing:
             missing += 1
-            reports.append(f"- {name}: MISSING" + (f"  (wanted {spec})" if spec else ""))
+        elif is_outdated:
+            outdated += 1
     if not listed:
         return f"{req} has no package lines to check."
     head = (f"{req} ({listed} packages): {missing} missing, {outdated} outdated."
@@ -201,7 +212,7 @@ def install_requirements(path="", upgrade=False):
     instead of only what is absent."""
     req = _resolve_req(path)
     if req is None:
-        return ("There's no requirements.txt to install from. Give me the project folder or "
+        return (f"There's no {REQUIREMENTS_TXT} to install from. Give me the project folder or "
                 "the file path.")
     python = sys.executable or "python"
     args = [python, "-m", "pip", "install", "-r", str(req)]

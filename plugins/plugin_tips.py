@@ -8,7 +8,7 @@ Try it:
     set WILCO_PLUGINS_ENABLED=1
     python -c "import mcp_tool; print('fortune' in mcp_tool.REGISTRY); print(mcp_tool.call('fortune_today', {}))"
 """
-import random
+import secrets
 
 
 def fortune_today():
@@ -20,4 +20,4 @@ def fortune_today():
         "Close the tabs you are not using; your head will thank you.",
         "You have solved harder problems than the one in front of you.",
     ]
-    return random.choice(tips)
+    return secrets.choice(tips)  # S2245 safe: non-crypto random for tips

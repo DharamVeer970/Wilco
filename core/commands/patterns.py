@@ -28,7 +28,7 @@ ONLINE = "youtube"
 DOWN = re.compile(r"\b(?:down|low|lower|decrease|reduce|less|quieter|softer|dim|dimmer|darker)\b")
 BRIGHT = re.compile(r"\b(?:brightness|dim|dimmer|darker|brighten|brighter)\b")
 TALK = re.compile(
-    r"\b(?:talk|talking|speak|speaking|speech|say|saying|voice|read|reading)\b[\w\s']{0,20}?"
+    r"\b(?:talk|talking|speak|speaking|speech|say|saying|voice|read|reading)\b(?:\s+\w+){0,6}\s+"
     r"\b(?:speed|pace|rate|fast|faster|quick|quicker|slow|slower|slowly)\b"
     r"|\b(?:speed\s+up|slow\s+down)\b")
 SLOWER = re.compile(r"\b(?:slow|slower|slowly|down|less)\b")
@@ -110,7 +110,7 @@ IN_WINDOWS = re.compile(r"(?:search|find)\s+(?:for\s+)?(\S+(?:\s+\S+)*?)\s+(?:in
 NAMED_FOLDER = re.compile(r"(?:open|go to)\s+(?:my\s+|the\s+)?(\w+(?:\s+\w+)*?)\s+folder")
 FILE_SEARCH = re.compile(
     r"(?:search|find|look for)\s+(?:my\s+|the\s+)?(?:files?|notes|documents?|laptop|computer|pc)"
-    r"\s+(?:for|that (?:has|have|mentions?|contains?|says?|includes?))\s+(.+)")
+    r"\s+(?:for|that)\s+\w*\s+(.+)", re.I)
 DIR_NAMED = re.compile(r"(?:open|go to)\s+(?:the\s+)?(?:directory|folder|path)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)")
 DIR_PATH = re.compile(r"(?:open|go to)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)$")
 DRIVES = re.compile(r"(?:what\s+)?drives?\s+(?:do i have|do you have|are there|list)?")

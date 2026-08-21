@@ -26,7 +26,7 @@ def _load():
         if not isinstance(data, dict):
             return _fresh()
         return data
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):
         return _fresh()
 
 

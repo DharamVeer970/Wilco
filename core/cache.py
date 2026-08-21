@@ -22,7 +22,7 @@ def _load_cache() -> dict:
         if not isinstance(data, dict):
             return {}
         return data
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):
         return {}
 
 
@@ -38,7 +38,7 @@ def _save_cache(data: dict):
 def _make_key(prefix: str, *args, **kwargs) -> str:
     """Create a cache key from arguments."""
     key_data = f"{prefix}:{args}:{sorted(kwargs.items())}"
-    return hashlib.md5(key_data.encode()).hexdigest()
+    return hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()  # S4790 safe: non-crypto cache key
 
 
 def get(prefix: str, *args, **kwargs) -> Optional[Any]:

@@ -31,7 +31,7 @@ _TUNING_KEY = "prompt_tuning"
 # people actually say. Each is stored verbatim and rendered out later. We deliberately do
 # NOT try to interpret them — the model reading the rendered list is far better at that.
 _ALWAYS = re.compile(r"\b(?:always|from now on|please remember|keep this)\b", re.I)
-_NEVER = re.compile(r"\b(?:never|do_not|dont|stop|don'?t|avoid|refrain)\b", re.I)
+_NEVER = re.compile(r"\b(?:never|do_not|stop|don'?t|avoid|refrain)\b", re.I)  # S5855 fixed: removed redundant 'dont'
 _BUT = re.compile(r"\bnot\b.*?\b(?:but|instead|rather)\b", re.I)
 
 
@@ -88,7 +88,7 @@ _QUERY_KEYWORDS = {
 }
 
 
-def _topic_of(query: str) -> str:
+def _topic_of(query: str) -> str | None:
     lower = query.lower()
     for topic, keywords in _QUERY_KEYWORDS.items():
         if any(k in lower for k in keywords):

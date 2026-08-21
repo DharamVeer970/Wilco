@@ -24,9 +24,9 @@ def with_retry(max_retries=3, base_delay=0.5, max_delay=30.0, exceptions=(Except
                     last_exception = e
                     if attempt == max_retries:
                         break
-                    # Exponential backoff with jitter
+                    # Exponential backoff with jitter - S2245 safe: jitter, not security
                     delay = min(base_delay * (2 ** attempt), max_delay)
-                    delay *= (0.5 + random.random() * 0.5)  # Add jitter
+                    delay *= (0.5 + random.random() * 0.5)  # NOSONAR - jitter only
                     time.sleep(delay)
             # If we get here, all retries failed
             raise last_exception
@@ -48,7 +48,7 @@ def retry_call(func, *args, max_retries=2, base_delay=0.5, **kwargs):
             if attempt == max_retries:
                 break
             delay = min(base_delay * (2 ** attempt), 10.0)
-            delay *= (0.5 + random.random() * 0.5)
+            delay *= (0.5 + random.random() * 0.5)  # NOSONAR - jitter only
             time.sleep(delay)
 
     # All retries failed - return error message

@@ -106,7 +106,7 @@ def suggest_alternative(query: str, failed_step: str, error: str, context: str) 
 def enhanced_respond(query: str, already_done=()):
     """Enhanced version of agent.respond() with planning and reflection."""
     if len(query.split()) > 5:
-        plan = create_plan(query)
+        create_plan(query)  # plan built for future use, not needed inline
         agent.respond(query, already_done)
     else:
         agent.respond(query, already_done)

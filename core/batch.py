@@ -58,7 +58,7 @@ class SubGoalTracker:
 
     def __init__(self, title=""):
         self.title = title or "task"
-        self.steps = []            # (description, status) ; status in planned|running|done|failed
+        self.steps = []  # list of [description, status]
         self.started = datetime.now()
         self._running_index = None
 
@@ -74,7 +74,7 @@ class SubGoalTracker:
     def complete(self, index):
         self.steps[index][1] = "done"
 
-    def fail(self, index, error=""):
+    def fail(self, index, _error=""):
         self.steps[index][1] = "failed"
 
     def progress(self):

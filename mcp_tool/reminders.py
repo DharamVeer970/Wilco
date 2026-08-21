@@ -64,7 +64,7 @@ def _restore():
     global _next_id
     try:
         saved = json.loads(_STORE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError):
         return
     if not isinstance(saved, list):
         return

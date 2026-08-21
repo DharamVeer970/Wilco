@@ -19,7 +19,12 @@ def review_audit_log(how_many=20):
         if e.get("compacted"):
             lines.append(f"[{e['ts']}] compacted {e['compacted']} older entries")
             continue
-        state = "ok" if e.get("ok") else ("denied" if e.get("denied") else "error")
+        if e.get("ok"):
+            state = "ok"
+        elif e.get("denied"):
+            state = "denied"
+        else:
+            state = "error"
         lines.append(f"{e.get('ts', '?')} | {state:6s} | {e.get('tool', '?')} | "
                      f"args {e.get('args_len', 0)} chars, result {e.get('result_len', 0)} chars, "
                      f"{e.get('latency_ms', 0):.0f}ms")

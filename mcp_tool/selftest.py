@@ -58,13 +58,32 @@ def _python_files():
                 yield Path(root) / name
 
 
+def _check_edit_result(result, path, problems):
+    """Verify edit_file result for current ALWAYS_ACT mode, append problems."""
+    from mcp_tool import gate, pc
+    from config import ALWAYS_ACT
+
+    if ALWAYS_ACT:
+        if result.startswith("NOT DONE"):
+            problems.append("edit_file parked in all-access mode")
+        if "9090" not in Path(path).read_text(encoding="utf-8"):
+            problems.append("edit_file didn't apply the change in all-access mode")
+    else:
+        if not result.startswith("NOT DONE"):
+            problems.append("edit_file did not stop to ask")
+        if "8080" not in Path(path).read_text(encoding="utf-8"):
+            problems.append("edit_file wrote to disk before being confirmed")
+        gate.confirm_yes()
+        if "9090" not in Path(path).read_text(encoding="utf-8"):
+            problems.append("confirming an edit did not apply it")
+
+
 def _round_trip():
     """Really create, read, edit, and back up a file in a temp folder that is deleted
     afterwards. All-access mode is exercised too: edits still apply and keep a .bak,
     just without the confirm-yes round.
     """
     from mcp_tool import gate, pc
-    from config import ALWAYS_ACT
 
     key = gate.session.get()
     theirs = gate._pending.pop(key, None)
@@ -76,19 +95,7 @@ def _round_trip():
         if "8080" not in pc.read_file(path):
             problems.append("read_file didn't return the contents")
         result = pc.edit_file(path, "8080", "9090")
-        if ALWAYS_ACT:
-            if result.startswith("NOT DONE"):
-                problems.append("edit_file parked in all-access mode")
-            if "9090" not in Path(path).read_text(encoding="utf-8"):
-                problems.append("edit_file didn't apply the change in all-access mode")
-        else:
-            if not result.startswith("NOT DONE"):
-                problems.append("edit_file did not stop to ask")
-            if "8080" not in Path(path).read_text(encoding="utf-8"):
-                problems.append("edit_file wrote to disk before being confirmed")
-            gate.confirm_yes()
-            if "9090" not in Path(path).read_text(encoding="utf-8"):
-                problems.append("confirming an edit did not apply it")
+        _check_edit_result(result, path, problems)
         if not os.path.isfile(path + ".bak"):
             problems.append("no .bak backup was kept")
         if "doesn't contain" not in pc.edit_file(path, "zzz-absent", "x"):

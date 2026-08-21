@@ -337,6 +337,29 @@ def _no_calls(message, acted, nudged, turn_tools=()):
     return "spoke"
 
 
+def _process_tool_calls(message, turn_tools, goal_tracker):
+    """Handle tool calls in one turn, return parked flag."""
+    for _c in message.tool_calls:
+        goal_tracker.add_goal(_c.function.name)
+    results, parked = _run_calls(message.tool_calls)
+    turn_tools.extend(results)
+    for _i in range(len(results)):
+        goal_tracker.complete(_i)
+    return parked
+
+
+def _handle_text_outcome(message, acted, nudged, turn_tools, user_text):
+    """Handle a text-only assistant message, return (acted, nudged, should_return)."""
+    outcome = _no_calls(message, acted, nudged, turn_tools)
+    if outcome == "spoke":
+        _persist_turn(user_text, _romanise(_speakable(message.content)) or "Done.", turn_tools)
+        _trim()
+        return acted, nudged, True
+    acted = acted or outcome == "ran"
+    nudged = nudged or outcome == "nudged"
+    return acted, nudged, False
+
+
 def respond(text, already_done=()):
     """Handle one spoken turn: call tools until the model is done, then say the reply.
 
@@ -345,8 +368,6 @@ def respond(text, already_done=()):
     """
     _refresh_prompt()
     user_text = text
-    # Learning: remember corrections like "always X" / "not that, the other one" so later
-    # turns behave differently (no-op unless WILCO_FEEDBACK_ENABLED=1).
     if is_correction(text):
         record_correction(text)
     text = (f"{text}\n\n{correction_prompt_snippet()}".strip()
@@ -356,49 +377,34 @@ def respond(text, already_done=()):
         text = (f"{text}\n\n(Already carried out, do not repeat: {'; '.join(already_done)}. "
                 f"Continue with the rest of the request.)")
     _repair()
-    checkpoint = len(history)  # everything from here is this turn, and unwinds together
+    checkpoint = len(history)
     history.append({"role": "user", "content": text})
 
-    # Sub-goal tracking: surface where a multi-step turn is at, for logging/prompting.
     goal_tracker = _batch.SubGoalTracker("turn")
-    acted = bool(already_done)  # the instant path did it, so a claim about it is not a lie
+    acted = bool(already_done)
     nudged = False
     turn_tools = []
+    spoke_done = False
     for _ in range(MAX_STEPS):
         try:
             message = _ask()
         except Exception as e:
             _turn_failed(checkpoint, acted, e)
             return
-
         history.append(_as_dict(message))
-
         if message.tool_calls:
-            for _c in message.tool_calls:
-                goal_tracker.add_goal(_c.function.name)
-            results, parked = _run_calls(message.tool_calls)
-            turn_tools.extend(results)
-            for _i in range(len(results)):
-                goal_tracker.complete(_i)
+            parked = _process_tool_calls(message, turn_tools, goal_tracker)
             acted = True
             if parked:
                 speak("That action is waiting for your confirmation. Say yes to continue or no to cancel.")
                 _trim()
                 return
             continue
-
-        outcome = _no_calls(message, acted, nudged, turn_tools)
-        if outcome == "spoke":
-            _persist_turn(user_text, _romanise(_speakable(message.content)) or "Done.", turn_tools)
-            _trim()
+        acted, nudged, should_return = _handle_text_outcome(message, acted, nudged, turn_tools, user_text)
+        if should_return:
+            spoke_done = True
             return
-        acted = acted or outcome == "ran"
-        nudged = nudged or outcome == "nudged"
-
-    # Only speak the "too many steps" message if we didn't already speak via _no_calls
-    # _no_calls returns "spoke" when there are no tool calls and we should speak the result
-    # If we get here, the loop completed without hitting "spoke", meaning we need the fallback
-    if outcome != "spoke":
+    if not spoke_done:
         reply = "That turned into more steps than I expected, so I've stopped. What were you after?"
         speak(reply)
         _persist_turn(user_text, reply, turn_tools)
