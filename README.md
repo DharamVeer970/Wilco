@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/tools-86-6E56CF" alt="86 tools">
+  <img src="https://img.shields.io/badge/tools-87-6E56CF" alt="87 tools">
   <img src="https://img.shields.io/badge/MCP-server-D97757" alt="MCP server">
   <img src="https://img.shields.io/badge/LLM-provider--agnostic-10B981" alt="Provider agnostic">
 </p>
@@ -15,7 +15,7 @@
 ---
 
 Wilco listens on the mic, transcribes with Whisper, and either fires a local command instantly
-or hands the utterance to an agent that can call **86 tools** — apps, files, folders, volume,
+or hands the utterance to an agent that can call **87 tools** — apps, files, folders, volume,
 brightness, media, Windows settings, the controls inside any window, web search, YouTube, and
 PowerShell. Replies are spoken back in a neural voice — thirteen voice packs, switchable by
 voice mid-conversation, at whatever pace you ask for.
@@ -135,14 +135,22 @@ Wilco/
 ├── main.py                 the listen loop, nothing else
 ├── config.py               .env, provider and model choice
 ├── core/
-│   ├── commands.py         the instant regex path — device commands, no LLM round-trip
+│   ├── commands/           the instant regex path — device commands, no LLM round-trip
+│   │   ├── __init__.py     handle + dispatch
+│   │   ├── patterns.py     regexes and lookup tables
+│   │   └── steps.py        28 step handlers
 │   ├── agent.py            the tool-calling loop
 │   ├── brain.py            the LLM client
 │   ├── context.py          last search, app, folder, file — for follow-ups
 │   └── online.py           YouTube search and playback
 ├── mcp_tool/               everything the agent can call
 │   ├── __init__.py         the registry — schemas derived from signatures
-│   ├── pc.py               Windows control, screenshots, time and date
+│   ├── pc/                 Windows control, screenshots, time and date
+│   │   ├── common.py       shared helpers and path resolution
+│   │   ├── apps.py         app and window control
+│   │   ├── input.py        typing, keys, clipboard
+│   │   ├── files.py        file and folder tools
+│   │   └── system.py       volume, brightness, media, power
 │   ├── ui.py               reading and operating controls inside a window
 │   ├── web.py              search, Wikipedia, weather, news, dictionary, rates, YouTube
 │   ├── reminders.py        alarms that speak up on their own
@@ -225,7 +233,7 @@ machine on its own.
 
 ## Use it as an MCP server
 
-The same 86 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
+The same 87 tools are also exposed over the [Model Context Protocol](https://modelcontextprotocol.io),
 so Claude Desktop, Claude Code or any MCP client can drive this machine.
 
 ```jsonc
@@ -244,7 +252,7 @@ written for the voice loop appears over MCP with no extra work:
 
 ```
 main.py ──────┐
-              ├──> mcp_tool.REGISTRY ──> 86 tools
+               ├──> mcp_tool.REGISTRY ──> 87 tools
 mcp_server.py ┘
 ```
 
@@ -310,7 +318,7 @@ restart, done. `.env.example` lists all of them with their defaults.
 | `WILCO_SPEED` | `25` | Talking pace, percent on top of that voice's own |
 | `WILCO_SPEED_STEP` | `15` | How far "talk faster" moves it |
 | `WILCO_MAX_STEPS` / `WILCO_MAX_MESSAGES` | `6` / `24` | Tool rounds per turn, conversation kept |
-| `WILCO_TOOL_LIMIT` | `24` | Compact tool schemas the model sees per turn (`0` = all 85) |
+| `WILCO_TOOL_LIMIT` | `24` | Compact tool schemas the model sees per turn (`0` = all 87) |
 | `WILCO_FUZZ_MIN` | `70` | How close a spoken name must be to count as a match |
 | `WILCO_FAST_WORDS` | `9` | Longer than this goes to the agent, not the regex path |
 | `WILCO_SHELL_TIMEOUT` | `25` | Seconds before a shell command is given up on |

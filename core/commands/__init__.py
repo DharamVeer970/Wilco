@@ -19,82 +19,16 @@ from mcp_tool import gate
 from windows import voice
 from windows.speech import speak
 
-SITES = {
-    "youtube": "https://www.youtube.com",
-    "wikipedia": "https://www.wikipedia.org",
-    "google": "https://www.google.com",
-}
-SEARCH = {
-    "google": "https://www.google.com/search?q={}",
-    "youtube": "https://www.youtube.com/results?search_query={}",
-    "wikipedia": "https://en.wikipedia.org/w/index.php?search={}",
-    "maps": "https://www.google.com/maps/search/{}",
-    "amazon": "https://www.amazon.in/s?k={}",
-    "github": "https://github.com/search?q={}",
-}
-KIND_WORDS = {
-    "music": ("music", "song", "songs", "audio", "playlist"),
-    "video": ("video", "videos", "movie", "movies"),
-    "image": ("image", "images", "photo", "photos", "picture", "pictures"),
-    "document": ("document", "documents", "pdf", "pdfs", "file", "files"),
-}
-ONLINE = "youtube"
-DOWN = re.compile(r"\b(?:down|low|lower|decrease|reduce|less|quieter|softer|dim|dimmer|darker)\b")
-BRIGHT = re.compile(r"\b(?:brightness|dim|dimmer|darker|brighten|brighter)\b")
-# how fast the words come out, which is not how loud — "louder" belongs to the volume path
-TALK = re.compile(
-    r"\b(?:talk|talking|speak|speaking|speech|say|saying|voice|read|reading)\b[\w\s']{0,20}?"
-    r"\b(?:speed|pace|rate|fast|faster|quick|quicker|slow|slower|slowly)\b"
-    r"|\b(?:speed\s+up|slow\s+down)\b")
-SLOWER = re.compile(r"\b(?:slow|slower|slowly|down|less)\b")
-# "type hello world" is literal text to put on the keyboard. "write a message to the BH1
-# group" is an instruction to COMPOSE one, and typing that sentence into whatever window
-# happened to be in front is not a smaller version of doing it — it is the wrong thing.
-COMPOSE = re.compile(
-    r"^(?:an?|the|my)?\s*(?:message|msg|text|email|e-?mail|note|reply|sms|whatsapp)\b"
-    r"|\b(?:to|in|on)\s+(?:whatsapp|telegram|gmail|outlook|email|discord|slack|teams)\b")
-RELATIVE = re.compile(r"\b(?:faster|slower|quicker|slowly|more|less|up|down|bit)\b")
-# each pattern is wrapped before THIS_PC is appended, or the suffix would bind to
-# the last alternative only and "shut down the laptop" would never match
-POWER = [
-    (r"shut\s?down|turn\s+off|power\s+off", "shutdown"),
-    (r"restart|reboot", "restart"),
-    (r"lock(?:\s+(?:the|my)\s+screen)?", "lock"),
-    (r"(?:go\s+to\s+)?sleep|hibernate|suspend|put\s+\S+(?:\s+\S+)?\s+to\s+sleep", "sleep"),
-]
-THIS_PC = r"(?:\s+(?:the|my|this))?(?:\s+(?:computer|pc|laptop|system|machine|thing))?"
-MEDIA_WORDS = {"pause": "play_pause", "resume": "play_pause", "play_pause": "play_pause",
-               "next": "next", "skip": "next", "previous": "previous", "back": "previous",
-               "stop": "stop"}
-STRIP = " .,!?;:'\""
-WHICH = "which one?"
-# Whisper rarely spells an uncommon name the same way twice — add what yours actually hears
-NAME = r"(?:wilco|wilko|will\s?co)"  # grouped, or a suffix would bind to the last alternative only
-
-# A Hindi command matched none of the English patterns, so every single one cost a round trip
-# to the model — two API calls to turn the volume up. Romanising is free, so the spoken Hindi
-# is folded into the English command it means and takes the same instant path. Only the
-# unambiguous ones are here; anything subtler still goes to the agent, where it belongs.
-HINDI = [
-    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*\bband\b", "mute"),
-    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*"
-     r"\b(?:barhaao|barhao|badhao|tez|zyaada|zyada|ooncha|oopar)\b", "volume up"),
-    (r"\b(?:aavaaz|awaaz|aawaz|sound|volume)\b.*"
-     r"\b(?:kam|ghataao|ghatao|dheere|neeche)\b", "volume down"),
-    (r"\b(?:tez|jaldi|fast)\b.*\bbolo\b", "talk faster"),
-    (r"\b(?:dheere|aaraam|slow)\b.*\bbolo\b", "talk slower"),
-    (r"\bkitane baje|kitne baje|samay kya|time kya\b", "what is the time"),
-    (r"^(?:mera |meri |mere )?(.+?)\s+(?:kholo|khol do|khol|chaaloo karo|chalu karo)\b",
-     "open {}"),
-    (r"^(?:ise|isko|use|usko|ye|yeh)?\s*(.*?)\s*\bband kar(?:o| do)\b", "close {}"),
-]
-_HINDI = [(re.compile(pattern), english) for pattern, english in HINDI]
-PLAIN = re.compile(r"(?:what'?s?|what is|tell me)\s+the\s+(?:time|date)$", re.I)
-# recall questions — "what was that", "what did i search for". They are follow-ups to the
-# instant path's own memory (context.query / file / app), so they must NOT be sent to the
-# agent by the question-gate, or the follow-up table never gets to answer them.
-RECALL = re.compile(r"what(?:'s| is| was)\s+(?:that|it|this|playing)"
-                    r"|what did (?:you play|i search(?: for)?)", re.I)
+from core.commands.patterns import (
+    SITES, SEARCH, KIND_WORDS, ONLINE, DOWN, BRIGHT, TALK, SLOWER, COMPOSE, RELATIVE,
+    POWER, THIS_PC, MEDIA_WORDS, STRIP, WHICH, NAME, HINDI, _HINDI, PLAIN, RECALL,
+    KIND_ASKED, FILLER, POLITE, TRAILING, SPLIT_RE, VERBS, QUESTION,
+    STEP, CLOSE, WHAT_IS_IT, PLAY_IT, SCOPE, ITSELF, VAGUE, FILLER_RE,
+    QUIT, FRESH, TYPE, TYPE_SPOKEN, CODE_WRITE, SHOW, IN_WINDOWS, NAMED_FOLDER,
+    FILE_SEARCH, DIR_NAMED, DIR_PATH, DRIVES, LIST_DRIVES, FILE_INFO, MUTE, VOLUME,
+    DIGIT, WIFI, MEDIA, CANCEL, RECYCLE, PING, PLAY, SEARCH_FOR, ON_SITE, SETTINGS,
+    OPEN, APP_SUFFIX, MEDIA_SAID,
+)
 
 # what Wilco is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
 _pending = None
@@ -119,8 +53,7 @@ def _kind(word):
     return next((k for k, w in KIND_WORDS.items() if word in w), None)
 
 
-KIND_ASKED = re.compile(
-    r"(?:play|open|show|list|start|listen to)\s+(?:me\s+)?(?:(?:my|all|some|the|a)\s+)?(\w+)")
+# KIND_ASKED imported from commands_patterns
 
 
 def _kind_asked_for(query):
@@ -624,8 +557,6 @@ def _do_close(target):
     return True
 
 
-MEDIA_SAID = {"play_pause": "Toggled playback", "next": "Skipped to the next track",
-              "previous": "Went back a track", "stop": "Stopped playback"}
 ACTIONS = {
     "open_app": open_app,
     "open_folder": open_folder,
@@ -665,20 +596,7 @@ def do(action, target):
     return run(target) is not False
 
 
-# "can you please just open notepad for me" -> "open notepad": every fullmatch below
-# only ever saw the polite wrapper, so the whole command fell through to chat
-# People don't start sentences with the verb. "Now can you open Spotify" used to match nothing
-# at all, because the politeness stripper insisted the sentence BEGIN with "can you" — one
-# stray "now" and the whole command fell through as if it had never been understood. These are
-# allowed to repeat and to appear on either side of the "can you", in any order.
-FILLER = (r"(?:hey|hi|hello|ok|okay|so|now|well|um+|uh+|erm|like|actually|alright|right|"
-          r"listen|please|just|kindly|quickly|maybe|then|also|and)")
-POLITE = re.compile(
-    r"^(?:" + FILLER + r"[\s,]+)*(?:" + NAME + r"[\s,]*)?(?:" + FILLER + r"[\s,]+)*"
-    r"(?:(?:can|could|would|will)\s+(?:you|u)\s+)?"
-    r"(?:(?:i\s+(?:want|need)\s+(?:you\s+)?to|i'?d\s+like\s+(?:you\s+)?to)\s+)?"
-    r"(?:" + FILLER + r"[\s,]+)*")
-TRAILING = re.compile(r"(?:[\s,]+(?:please|for\s+me|mate|buddy|bro|now|" + NAME + r"|thanks?))+$")
+# FILLER/POLITE/TRAILING imported from commands_patterns
 
 
 def _bare(query):
@@ -686,16 +604,7 @@ def _bare(query):
     return TRAILING.sub("", POLITE.sub("", query)).strip(STRIP) or query
 
 
-SPLIT_RE = re.compile(r"\s(?:and then|and also|then|and)\s+")
-VERBS = ("open", "show", "play", "search", "google", "find", "type", "write", "set",
-         "turn", "go to", "list", "close", "pause", "next", "previous", "stop",
-         "mute", "volume", "brightness", "launch", "start")
-
-
-QUESTION = re.compile(
-    r"^(?:what|why|how|when|where|who|which|whose|whom|whats|what's|"
-    r"is|are|was|were|do|does|did|should|shall|may|might|"
-    r"tell|explain|define|describe|compare|suggest|recommend|think)\b")
+# SPLIT_RE / VERBS / QUESTION imported from commands_patterns
 
 
 def _for_the_agent(query):
@@ -772,12 +681,7 @@ def _run_parts(parts, query):
     return True
 
 
-STEP = re.compile(
-    r"(?:play|open|go\s+to)?\s*(?:the\s+)?(next|previous|last)\s*(?:one|song|video|track)?")
-CLOSE = re.compile(r"close\b(.*)")
-WHAT_IS_IT = re.compile(r"what(?:'s| is| was)\s+(?:that|it|this|playing)"
-                        r"|what did (?:you play|i search(?: for)?)")
-PLAY_IT = re.compile(r"(?:play|resume|open)\s*(?:it|that|this|the\s+same|again)?")
+# STEP / CLOSE / WHAT_IS_IT / PLAY_IT imported from commands_patterns
 
 
 def _up_next(query):
@@ -844,13 +748,7 @@ def _follow_up(query):
     return None
 
 
-# "close this browser tab" and "close the tab in chrome" used to miss this and fall through
-# to taskkill — which killed the whole browser when all that was wanted was one tab
-FILLER = r"(?:this|that|the|current|my|active|open|browser|chrome)"
-SCOPE = re.compile(rf"(?:{FILLER}\s+)*(tab|window)s?(?:\s+(?:in|on|of)\s+(?:the\s+|my\s+)?(.+))?$")
-ITSELF = ("", "it", "that", "this", "the app", "this app", "the application")
-# "close everything" is not "close the thing in front" — it needs asking about, not guessing
-VAGUE = re.compile(r"(?:everything|all|all of (?:it|them)|all (?:the )?(?:apps|windows|tabs))")
+# SCOPE / ITSELF / VAGUE / FILLER_RE imported from commands_patterns
 
 
 def _close(name):
@@ -887,302 +785,7 @@ def _close(name):
     return "command"
 
 
-QUIT = re.compile(r"(?:" + NAME + r"[ ,]*)?(?:quit|exit|goodbye|bye)")
-FRESH = re.compile(r"(?:start over|new task|forget (?:it|that|everything))")
-TYPE = re.compile(r"(?:type|write)\s+(.+)")
-TYPE_SPOKEN = re.compile(r"(?:type|write)\s+(.+)", re.I)
-CODE_WRITE = re.compile(
-    r"\b(?:python|typescript|java|javascript|go|golang|rust|swift|kotlin|c\+\+|c#|"
-    r"php|perl|lua|bash|shell|powershell|sql|html|css|vba|json)\b"
-    r"|\b(?:code|program|script|function|class|application|app|website|webpage|"
-    r"bot|automation|api|macro|algorithm)\b",
-    re.I)
-SHOW = re.compile(r"show\s+(?:me\s+)?(?:the\s+|all\s+)?(\w+)"
-                  r"(?:\s+(?:in|from|inside)\s+(?:my\s+|the\s+)?([\w ]+?)(?:\s+folder)?)?$")
-IN_WINDOWS = re.compile(r"(?:search|find)\s+(?:for\s+)?(\S+(?:\s+\S+)*?)\s+(?:in|on)\s+windows$")
-NAMED_FOLDER = re.compile(r"(?:open|go to)\s+(?:my\s+|the\s+)?(\w+(?:\s+\w+)*?)\s+folder")
-FILE_SEARCH = re.compile(
-    r"(?:search|find|look for)\s+(?:my\s+|the\s+)?(?:files?|notes|documents?|laptop|computer|pc)"
-    r"\s+(?:for|that (?:has|have|mentions?|contains?|says?|includes?))\s+(.+)")
-DIR_NAMED = re.compile(
-    r"(?:open|go to)\s+(?:the\s+)?(?:directory|folder|path)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)")
-DIR_PATH = re.compile(r"(?:open|go to)\s+([A-Za-z]:[\\/][^\s]+|~/[^\s]+)$")
-DRIVES = re.compile(r"(?:what\s+)?drives?\s+(?:do i have|do you have|are there|list)?")
-LIST_DRIVES = re.compile(r"list\s+(?:the\s+)?drives?")
-FILE_INFO = re.compile(r"(?:how\s+big\s+is|what\s+size\s+is|when\s+was|where\s+is|info\s+on|"
-                       r"size\s+of)\s+(?:the\s+)?(.+)")
-MUTE = re.compile(r"(?:mute|unmute)(?:\s+(?:the\s+)?(?:sound|volume|audio))?")
-VOLUME = re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsofter\b")
-DIGIT = re.compile(r"\d")
-WIFI = re.compile(r"(?:turn\s+)?(?:(on|off)\s+)?(?:the\s+)?wi-?fi(?:\s+(on|off))?")
-MEDIA = re.compile(r"(?:media\s+)?(pause|resume|next|skip|previous|back|stop)"
-                   r"(?:\s+(?:the\s+)?(?:song|track|video|music))?")
-CANCEL = re.compile(r"cancel (?:the )?(?:shutdown|restart)|(?:don't|do not) shut ?down")
-RECYCLE = re.compile(r"empty (?:the )?(?:recycle bin|trash)")
-PING = re.compile(r"ping\s+([\w.:-]+)")
-PLAY = re.compile(r"(?:play|put on)\s+(?:the\s+)?(\S+(?:\s+\S+)*?)(?:\s+on\s+youtube)?$")
-SEARCH_FOR = re.compile(r"(?:search|google|look up|find)\s+(?:for\s+)?(.+)")
-ON_SITE = re.compile(r"\s(?:on|in)\s+(\w+)$")
-SETTINGS = re.compile(r"\bsettings?\b|\boptions?\b")
-OPEN = re.compile(r"(?:open|launch|start)\s+(?:my\s+|the\s+)?(.+)")
-APP_SUFFIX = re.compile(r"\s(?:app|application|file)$")
-
-
-def _step_site(query, _spoken):
-    site = next((s for s in SITES if f"open {s}" in query), None)
-    if not site:
-        return None
-    speak(f"Opening {site}.")
-    webbrowser.open(SITES[site])
-    return "command"
-
-
-def _step_time(query, _spoken):
-    if "the time" not in query:
-        return None
-    do("time", "")
-    return "command"
-
-
-def _step_ai(query, _spoken):
-    if "using artificial intelligence" not in query:
-        return None
-    ai(query)
-    return "command"
-
-
-def _step_reset_chat(query, _spoken):
-    if "reset chat" not in query:
-        return None
-    agent.reset()
-    speak("Chat history reset.")
-    return "command"
-
-
-def _step_type(query, spoken):
-    m = TYPE.match(query)
-    if not m or COMPOSE.search(m.group(1).strip(STRIP)):
-        return None
-    if CODE_WRITE.search(m.group(1)) or CODE_WRITE.search(query):
-        # Code requests describe what to generate, not text to type. The agent explains the
-        # plan first, writes the file, runs it to debug, then reports the real result.
-        return None
-    # type what was actually said, politeness and all — it's literal text
-    exact = TYPE_SPOKEN.search(spoken)
-    do("type_text", (exact or m).group(1).strip(STRIP))
-    return "command"
-
-
-def _step_show(query, _spoken):
-    m = SHOW.match(query)
-    kind = _kind(m.group(1)) if m else None
-    if not kind:
-        return None
-    show_in_folder(kind, m.group(2))
-    return "command"
-
-
-def _step_windows_search(query, _spoken):
-    m = IN_WINDOWS.match(query)
-    if not m:
-        return None
-    do("windows_search", m.group(1).strip(STRIP))
-    return "command"
-
-
-def _step_folder(query, _spoken):
-    m = NAMED_FOLDER.match(query)
-    if not m:
-        return None
-    do("open_folder", m.group(1))
-    return "command"
-
-
-def _step_file_search(query, _spoken):
-    """Offline content search — "search my files for X", "find the file that mentions X"."""
-    m = FILE_SEARCH.match(query)
-    text = m.group(1).strip(STRIP) if m else ""
-    if not text:
-        return None
-    from mcp_tool.pc import search_file_contents
-    result = search_file_contents(text)
-    speak(result[:400] if len(result) > 400 else result)
-    return "command"
-
-
-def _step_directory(query, _spoken):
-    """A directory by path — "open D:/Codes", "open the directory C:/Users/me"."""
-    m = DIR_NAMED.match(query) or DIR_PATH.match(query)
-    if not m:
-        return None
-    from mcp_tool.pc import open_directory
-    speak(open_directory(m.group(1)))
-    return "command"
-
-
-def _step_drives(query, _spoken):
-    if not (DRIVES.fullmatch(query) or LIST_DRIVES.fullmatch(query)):
-        return None
-    from mcp_tool.pc import list_drives
-    speak(list_drives())
-    return "command"
-
-
-def _step_file_info(query, _spoken):
-    """"how big is X", "when was X modified", "where is X"."""
-    m = FILE_INFO.match(query)
-    if not m:
-        return None
-    from mcp_tool.pc import file_info
-    speak(file_info(m.group(1).strip(STRIP)))
-    return "command"
-
-
-def _step_mute(query, _spoken):
-    if not MUTE.fullmatch(query):
-        return None
-    do("mute", "")
-    return "command"
-
-
-def _step_volume(query, _spoken):
-    if not VOLUME.search(query):
-        return None
-    if DIGIT.search(query):
-        do("set_volume", query)
-    else:
-        do("volume_down" if DOWN.search(query) else "volume_up", "")
-    return "command"
-
-
-def _step_talk_speed(query, _spoken):
-    if not TALK.search(query):
-        return None
-    do("speech_speed", query)
-    return "command"
-
-
-def _step_brightness(query, _spoken):
-    if not BRIGHT.search(query):
-        return None
-    do("set_brightness", query)
-    return "command"
-
-
-def _step_wifi(query, _spoken):
-    m = WIFI.fullmatch(query)
-    state = (m.group(1) or m.group(2)) if m else None
-    if not state:
-        return None
-    do("wifi_on" if state == "on" else "wifi_off", "")
-    return "command"
-
-
-def _step_media(query, _spoken):
-    word = MEDIA.fullmatch(query)
-    if not (word and do("media", MEDIA_WORDS[word.group(1)])):
-        return None
-    return "command"
-
-
-def _step_cancel_shutdown(query, _spoken):
-    if not CANCEL.fullmatch(query):
-        return None
-    do("cancel_shutdown", "")
-    return "command"
-
-
-def _step_power(query, _spoken):
-    action = next((a for p, a in POWER if re.fullmatch(f"(?:{p}){THIS_PC}", query)), None)
-    if not action:
-        return None
-    do(action, "")
-    return "command"
-
-
-def _step_recycle_bin(query, _spoken):
-    if not RECYCLE.search(query):
-        return None
-    do("empty_recycle_bin", "")
-    return "command"
-
-
-def _step_ping(query, _spoken):
-    m = PING.fullmatch(query)
-    if not m:
-        return None
-    speak(shell.ping(m.group(1)) or f"Couldn't reach {m.group(1)}.")
-    return "command"
-
-
-def _step_system_info(query, _spoken):
-    said = system_info(query)
-    if not said:
-        return None
-    speak(said)
-    return "command"
-
-
-def _step_kind(query, _spoken):
-    kind = _kind_asked_for(query)
-    if not kind:
-        return None
-    _browse(kind)
-    return "command"
-
-
-def _step_play(query, _spoken):
-    m = PLAY.match(query)
-    if not m:
-        return None
-    play_online(m.group(1).strip(STRIP))
-    return "command"
-
-
-def _step_search(query, _spoken):
-    # only an explicitly named destination takes the instant path. A bare "search for X" or
-    # "find X" goes to the agent instead, which can actually read the web and answer, or
-    # look for a file — opening a results page was never what was being asked for.
-    m = SEARCH_FOR.match(query)
-    if not m:
-        return None
-    text = m.group(1).strip(STRIP)
-    on = ON_SITE.search(text)
-    site = on.group(1) if on and on.group(1) in SEARCH else None
-    if not text or not (site or query.startswith("google")):
-        return None
-    if site:
-        text = text[: on.start()].strip(STRIP)
-    if not text:
-        return None
-    play_online(text) if site == ONLINE else web_search(text, site or "google")
-    return "command"
-
-
-def _step_settings(query, _spoken):
-    return "command" if SETTINGS.search(query) and do("open_settings", query) else None
-
-
-def _step_open(query, _spoken):
-    m = OPEN.match(query)
-    if not m:
-        return None
-    name = APP_SUFFIX.sub("", m.group(1).strip(STRIP)).rstrip()
-    name = re.sub(r"\s+for\s+me(?:\s+to\s+(?:view|see))?$", "", name)
-    if (re.fullmatch(r"(?:it|that|this|(?:this|that|the) (?:file|image|screenshot|photo|picture))", name)
-            and context.file and os.path.isfile(context.file)):
-        kind = files.EXT_KIND.get(os.path.splitext(context.file)[1].lower(), "document")
-        _open_path(kind, os.path.splitext(os.path.basename(context.file))[0], context.file)
-        return "command"
-    return "command" if open_app(name) or open_any_file(name) else None
-
-
-STEPS = (_step_site, _step_time, _step_ai, _step_reset_chat, _step_type, _step_show,
-         _step_windows_search, _step_folder, _step_file_search, _step_directory,
-         _step_drives, _step_file_info, _step_mute, _step_volume, _step_talk_speed,
-         _step_brightness, _step_wifi, _step_media, _step_cancel_shutdown, _step_power,
-         _step_recycle_bin, _step_ping, _step_system_info, _step_kind, _step_play,
-         _step_search, _step_settings, _step_open)
+from core.commands.steps import STEPS
 
 
 def _reask(unanswered):

@@ -13,12 +13,13 @@ import re
 from typing import Union
 
 from mcp_tool import gate, governance, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow, workspace
+from mcp_tool.pc import apps as pc_apps, files as pc_files, input as pc_input, system as pc_system
 
 # governance & extensibility (all off by default — see core/safety.py, core/plugins.py)
 from core import plugins as _plugins
 from core import safety as _safety
 
-MODULES = (pc, ui, web, reminders, message, shell_tool, workflow, selftest, voice, gate, workspace, governance)
+MODULES = (pc_apps, pc_input, pc_files, pc_system, ui, web, reminders, message, shell_tool, workflow, selftest, voice, gate, workspace, governance)
 JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
@@ -72,7 +73,7 @@ def _full_description(fn):
 
 
 # The model gets a one-sentence summary instead of the full docstring. The full set of
-# ~86 docstrings is the single biggest token cost on every round trip — the first sentence
+# ~87 docstrings is the single biggest token cost on every round trip — the first sentence
 # carries the "what it does and when to reach for it", which is what the model actually
 # needs; the full text stays available via list_my_tools and the MCP server.
 _TOOL_DESC_MAX = 160
@@ -109,8 +110,12 @@ LLM_TOOLS = [_schema(fn, _summary(fn)) for fn in REGISTRY.values()]
 _ARGUMENT_ALIASES = {
     "path": ("name", "folder_name"),
     "file_path": ("name", "path"),
-    "filename": ("name",),
+    "filename": ("path", "name"),
+    "file": ("name", "path"),
+    "source": ("path", "name"),
+    "directory": ("folder_name",),
     "folder": ("folder_name",),
+    "content": ("text",),
 }
 
 

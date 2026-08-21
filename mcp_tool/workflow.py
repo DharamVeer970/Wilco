@@ -27,7 +27,7 @@ import windows.shell as shell
 import windows.system as system
 from config import MAX_OUTPUT
 from mcp_tool.gate import _park
-from mcp_tool.pc import _resolve
+from mcp_tool.pc.common import _resolve
 
 PROJECT = Path(__file__).resolve().parent.parent
 MACROS = PROJECT / "macros.json"

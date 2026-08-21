@@ -1,0 +1,49 @@
+[project]
+name = "wilco"
+version = "0.1.0"
+description = "Wilco - voice agent for Windows. You talk, it does the thing."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Wilco"}]
+dependencies = [
+    "openai>=0.27.8",
+    "huggingface-hub>=0.35.3",
+    "SpeechRecognition>=3.8.1",
+    "edge-tts>=7.2.8",
+    "sounddevice>=0.5.3",
+    "requests>=2.32.5",
+    "rapidfuzz>=1.1.0",
+    "python-dotenv>=1.1.1",
+    "pywin32>=311",
+    "comtypes>=1.4.11",
+    "mcp>=1.23.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.3"]
+
+[project.scripts]
+wilco = "main:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "__pycache__*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.pytest]
+# keep compat for old pytest

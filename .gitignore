@@ -7,3 +7,4 @@ Openai/
 macros.json
 .vscode/
 tests/
+*.egg-info/
