@@ -18,9 +18,8 @@ from core.brain import PROMPTS, llm
 from core.analytics import record_tool_call
 from core.memory import add_conversation_turn, get_recent_conversations
 from core.learning import (record_correction, correction_prompt_snippet,
-                           is_correction, FEEDBACK_ENABLED)
+                           is_correction)
 from core.retry import retry_call
-from core import ux as _ux
 from core import batch as _batch
 from windows import voice
 from windows.speech import speak

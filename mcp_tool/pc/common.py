@@ -3,17 +3,13 @@
 This is not a tool module itself (no public tools); the four pc_* modules
 import from here. It must not import any pc_* module to avoid cycles.
 """
-import datetime
 import os
 import re
 import shutil
 
 import windows.files as files
 import windows.shell as shell
-import windows.system as system
-from config import ALWAYS_ACT, MAX_OUTPUT, TEXT_LIMIT
 from core import context
-from mcp_tool.gate import _park
 
 KINDS = ("music", "video", "image", "document")
 

@@ -11,7 +11,6 @@
 
 Keep this dependency-free and safe: no import of the LLM, no side effects at import.
 """
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 

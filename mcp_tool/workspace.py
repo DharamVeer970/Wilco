@@ -12,7 +12,6 @@ from a question that only asked to CHECK something. These tools give it the one 
 The split is the point. Checking is free and runs at once; changing is held until the user
 explicitly says so — never because a check "surfaced" something.
 """
-import os
 import re
 import subprocess
 import sys

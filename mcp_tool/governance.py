@@ -4,9 +4,8 @@ These expose the core/safety.py and core/analytics.py layers as callable tools s
 answer "what have you done today", "which tools are disallowed", and "how's the system
 performing" without any special-casing. They are read-only and harmless.
 """
-from datetime import datetime
 
-from core.safety import audit_recent, check_permission, ALWAYS_ALLOW, ALWAYS_BLOCK
+from core.safety import audit_recent, ALWAYS_ALLOW, ALWAYS_BLOCK
 from core.analytics import analytics
 
 
@@ -29,7 +28,7 @@ def review_audit_log(how_many=20):
 
 def permission_status():
     """Report the current permission posture: default stance, which tools are always allowed, always blocked, or explicitly allowed/denied."""
-    lines = [f"Permissions enabled: {_enabled()}", f"Default stance: allow"]
+    lines = [f"Permissions enabled: {_enabled()}", "Default stance: allow"]
     lines.append("Always allowed: " + (", ".join(sorted(ALWAYS_ALLOW)) or "none"))
     lines.append("Always blocked: " + (", ".join(sorted(ALWAYS_BLOCK)) or "none"))
     return "\n".join(lines)

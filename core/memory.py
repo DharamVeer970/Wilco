@@ -5,7 +5,6 @@ conversation context, and successful tool chains. Nothing here is critical for o
 if the memory file is deleted, Wilco starts fresh but still works.
 """
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -132,7 +131,7 @@ def learn_pattern(query_pattern, tool_chain, success=True):
 def find_similar_patterns(query, threshold=0.7):
     """Find learned patterns similar to the given query using fuzzy matching."""
     from rapidfuzz import fuzz
-    
+
     data = _load()
     matches = []
     for pattern in data["learned_patterns"]:
@@ -153,18 +152,18 @@ def prune_old_data(days=30):
     """Remove data older than the specified number of days."""
     data = _load()
     cutoff = datetime.now() - timedelta(days=days)
-    
+
     # Prune conversations
     data["conversations"] = [
         conv for conv in data["conversations"]
         if datetime.fromisoformat(conv["timestamp"]) > cutoff
     ]
-    
+
     # Prune learned patterns
     data["learned_patterns"] = [
         pattern for pattern in data["learned_patterns"]
         if datetime.fromisoformat(pattern["learned_at"]) > cutoff
     ]
-    
+
     data["last_pruned"] = datetime.now().isoformat()
     _save(data)

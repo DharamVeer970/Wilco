@@ -21,14 +21,17 @@ jobs:
           pip install pytest ruff
           pip install -e .
       - name: Lint (ruff)
-        continue-on-error: true
-        run: ruff check . --output-format github || true
+        run: ruff check . --output-format github --exit-zero
       - name: Compile check
         run: |
           python -m py_compile core/commands/__init__.py core/commands/patterns.py core/commands/steps.py
           python -m py_compile mcp_tool/pc/__init__.py mcp_tool/pc/common.py mcp_tool/pc/apps.py mcp_tool/pc/input.py mcp_tool/pc/files.py mcp_tool/pc/system.py
           python -m py_compile mcp_tool/__init__.py mcp_tool/workflow.py
       - name: Registry smoke
+        env:
+          COHERE_API_KEY: dummy
+          GROQ_API_KEY: dummy
+          HUGGINGFACE_API_KEY: dummy
         run: python -c "import mcp_tool; assert len(mcp_tool.REGISTRY) >= 87, len(mcp_tool.REGISTRY)"
       - name: Tests
         run: pytest -q || echo "no tests or tests skipped on CI"

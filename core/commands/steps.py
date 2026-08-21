@@ -9,10 +9,9 @@ import webbrowser
 
 import windows.files as files
 import windows.shell as shell
-import windows.system as system
 from core.commands.patterns import (
     APP_SUFFIX, CANCEL, CODE_WRITE, COMPOSE, DIGIT, DIR_NAMED, DIR_PATH, DOWN, DRIVES,
-    FILE_INFO, FILE_SEARCH, FRESH, IN_WINDOWS, LIST_DRIVES, MEDIA, MEDIA_WORDS, MUTE,
+    FILE_INFO, FILE_SEARCH, IN_WINDOWS, LIST_DRIVES, MEDIA, MEDIA_WORDS, MUTE,
     NAMED_FOLDER, ON_SITE, ONLINE, OPEN, PING, PLAY, RECYCLE, SEARCH, SEARCH_FOR,
     SETTINGS, SHOW, STRIP, TALK, TYPE, TYPE_SPOKEN, VOLUME, WIFI, BRIGHT, SITES,
 )

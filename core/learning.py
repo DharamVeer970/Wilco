@@ -15,9 +15,8 @@ so it is fast and safe, and it layers on core/memory.py for persistence.
 Enable with  WILCO_FEEDBACK_ENABLED=1  (feedback loop) in .env.
 """
 import re
-from datetime import datetime
 
-from config import MAX_MESSAGES, _flag
+from config import _flag
 from core.memory import get_preference, set_preference
 
 FEEDBACK_ENABLED = _flag("WILCO_FEEDBACK_ENABLED", False)

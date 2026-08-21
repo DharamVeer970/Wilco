@@ -50,6 +50,6 @@ def retry_call(func, *args, max_retries=2, base_delay=0.5, **kwargs):
             delay = min(base_delay * (2 ** attempt), 10.0)
             delay *= (0.5 + random.random() * 0.5)
             time.sleep(delay)
-    
+
     # All retries failed - return error message
     return f"{func.__name__} failed after {max_retries + 1} attempts: {type(last_error).__name__}: {last_error}"

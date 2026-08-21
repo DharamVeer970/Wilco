@@ -1,8 +1,6 @@
 """Analytics for Wilco - tracks tool usage, performance, and success rates."""
 import json
-import time
-from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -11,7 +9,7 @@ STATS_FILE = Path.home() / ".wilco" / "analytics.json"
 
 class ToolStats:
     """Tracks execution statistics for a single tool."""
-    
+
     def __init__(self, name: str):
         self.name = name
         self.total_calls = 0
@@ -20,7 +18,7 @@ class ToolStats:
         self.total_duration = 0.0
         self.last_used = None
         self.recent_errors = []
-    
+
     def record_call(self, success: bool, duration: float, error: str = None):
         self.total_calls += 1
         if success:
@@ -31,15 +29,15 @@ class ToolStats:
         self.last_used = datetime.now()
         if error and len(self.recent_errors) < 5:
             self.recent_errors.append(error)
-    
+
     @property
     def success_rate(self) -> float:
         return self.successes / self.total_calls if self.total_calls else 0.0
-    
+
     @property
     def avg_duration(self) -> float:
         return self.total_duration / self.total_calls if self.total_calls else 0.0
-    
+
     def to_dict(self) -> dict:
         return {
             "name": self.name, "total_calls": self.total_calls,
@@ -49,7 +47,7 @@ class ToolStats:
             "last_used": self.last_used.isoformat() if self.last_used else None,
             "recent_errors": self.recent_errors,
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> "ToolStats":
         stats = cls(data["name"])
@@ -65,12 +63,12 @@ class ToolStats:
 
 class Analytics:
     """Central analytics tracker for all tool usage."""
-    
+
     def __init__(self):
         self.tool_stats: Dict[str, ToolStats] = {}
         self.session_start = datetime.now()
         self._load()
-    
+
     def _load(self):
         try:
             data = json.loads(STATS_FILE.read_text(encoding="utf-8"))
@@ -78,7 +76,7 @@ class Analytics:
                 self.tool_stats[name] = ToolStats.from_dict(tool_data)
         except (FileNotFoundError, json.JSONDecodeError, KeyError):
             self.tool_stats = {}
-    
+
     def _save(self):
         try:
             data = {
@@ -89,29 +87,29 @@ class Analytics:
             STATS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
             pass
-    
+
     def record_execution(self, tool_name: str, success: bool, duration: float, error: str = None):
         if tool_name not in self.tool_stats:
             self.tool_stats[tool_name] = ToolStats(tool_name)
         self.tool_stats[tool_name].record_call(success, duration, error)
         self._save()
-    
+
     def get_tool_stats(self, tool_name: str) -> Optional[ToolStats]:
         return self.tool_stats.get(tool_name)
-    
+
     def get_all_stats(self) -> Dict[str, ToolStats]:
         return self.tool_stats
-    
+
     def get_most_used(self, limit: int = 10) -> List[ToolStats]:
         return sorted(self.tool_stats.values(), key=lambda s: s.total_calls, reverse=True)[:limit]
-    
+
     def get_least_reliable(self, limit: int = 5) -> List[ToolStats]:
         reliable = [s for s in self.tool_stats.values() if s.total_calls >= 5]
         return sorted(reliable, key=lambda s: s.success_rate)[:limit]
-    
+
     def get_slowest(self, limit: int = 5) -> List[ToolStats]:
         return sorted(self.tool_stats.values(), key=lambda s: s.avg_duration, reverse=True)[:limit]
-    
+
     def get_session_summary(self) -> dict:
         total_calls = sum(s.total_calls for s in self.tool_stats.values())
         total_successes = sum(s.successes for s in self.tool_stats.values())
@@ -123,7 +121,7 @@ class Analytics:
             "avg_tool_duration": total_duration / total_calls if total_calls > 0 else 0,
             "unique_tools_used": len(self.tool_stats),
         }
-    
+
     def clear(self):
         self.tool_stats = {}
         self.session_start = datetime.now()
@@ -145,11 +143,11 @@ def get_analytics_summary() -> str:
         f"Overall success rate: {summary['overall_success_rate']:.1%}",
         f"Unique tools used: {summary['unique_tools_used']}",
     ]
-    
+
     most_used = analytics.get_most_used(5)
     if most_used:
         lines.append("\nMost used tools:")
         for stats in most_used:
             lines.append(f"  {stats.name}: {stats.total_calls} calls ({stats.success_rate:.0%} success)")
-    
+
     return "\n".join(lines)

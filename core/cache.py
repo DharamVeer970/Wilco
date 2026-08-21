@@ -6,7 +6,6 @@ across sessions, with automatic cleanup of expired entries.
 """
 import hashlib
 import json
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -46,7 +45,7 @@ def get(prefix: str, *args, **kwargs) -> Optional[Any]:
     """Get a cached value if it exists and hasn't expired."""
     key = _make_key(prefix, *args, **kwargs)
     cache = _load_cache()
-    
+
     if key in cache:
         entry = cache[key]
         # Check if expired
@@ -65,27 +64,27 @@ def set(prefix: str, value: Any, ttl: int = DEFAULT_TTL, *args, **kwargs):
     """Cache a value with the given TTL in seconds."""
     key = _make_key(prefix, *args, **kwargs)
     cache = _load_cache()
-    
+
     expires_at = (datetime.now() + timedelta(seconds=ttl)).isoformat()
     cache[key] = {
         "value": value,
         "expires_at": expires_at,
         "created_at": datetime.now().isoformat(),
     }
-    
+
     _save_cache(cache)
 
 
 def invalidate(prefix: str = None, *args, **kwargs):
     """Invalidate cache entries. If prefix is None, clears all cache."""
     cache = _load_cache()
-    
+
     if prefix is None:
         cache.clear()
     else:
         key = _make_key(prefix, *args, **kwargs)
         cache.pop(key, None)
-    
+
     _save_cache(cache)
 
 
@@ -93,17 +92,17 @@ def cleanup_expired():
     """Remove all expired cache entries."""
     cache = _load_cache()
     now = datetime.now()
-    
+
     expired_keys = []
     for key, entry in cache.items():
         if "expires_at" in entry:
             expires_at = datetime.fromisoformat(entry["expires_at"])
             if now > expires_at:
                 expired_keys.append(key)
-    
+
     for key in expired_keys:
         del cache[key]
-    
+
     _save_cache(cache)
     return len(expired_keys)
 
@@ -112,7 +111,7 @@ def get_stats() -> dict:
     """Get cache statistics."""
     cache = _load_cache()
     now = datetime.now()
-    
+
     total = len(cache)
     expired = 0
     for entry in cache.values():
@@ -120,7 +119,7 @@ def get_stats() -> dict:
             expires_at = datetime.fromisoformat(entry["expires_at"])
             if now > expires_at:
                 expired += 1
-    
+
     return {
         "total_entries": total,
         "expired_entries": expired,
@@ -143,7 +142,7 @@ def cached(ttl: int = DEFAULT_TTL):
             cached_value = get(func.__name__, *args, **kwargs)
             if cached_value is not None:
                 return cached_value
-            
+
             # Call function and cache result
             result = func(*args, **kwargs)
             set(func.__name__, result, ttl, *args, **kwargs)

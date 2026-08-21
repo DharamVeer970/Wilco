@@ -1,6 +1,5 @@
 """Planning and reasoning layer for Wilco - breaks complex requests into steps and validates outcomes."""
 import re
-import time
 from typing import List, Optional
 
 from core import agent
@@ -26,29 +25,29 @@ What else could be attempted?"""
 
 class Plan:
     """Represents a multi-step plan for accomplishing a task."""
-    
+
     def __init__(self, steps: List[str], query: str):
         self.steps = steps
         self.query = query
         self.current_step = 0
         self.results = []
         self.failed_steps = []
-    
+
     def next_step(self) -> Optional[str]:
         if self.current_step < len(self.steps):
             step = self.steps[self.current_step]
             self.current_step += 1
             return step
         return None
-    
+
     def record_result(self, step: str, result: str, success: bool):
         self.results.append({"step": step, "result": result, "success": success})
         if not success:
             self.failed_steps.append(step)
-    
+
     def is_complete(self) -> bool:
         return self.current_step >= len(self.steps)
-    
+
     def has_failures(self) -> bool:
         return len(self.failed_steps) > 0
 
@@ -61,17 +60,17 @@ def create_plan(query: str) -> Plan:
             model=chat_model, messages=[{"role": "user", "content": prompt}],
             max_tokens=500, temperature=0.1,
         ).choices[0].message.content
-        
+
         steps = []
         for line in response.splitlines():
             line = line.strip()
             match = re.match(r'^\d+\.\s+(.+)', line)
             if match:
                 steps.append(match.group(1).strip())
-        
+
         if not steps:
             steps = [response.strip()]
-        
+
         return Plan(steps, query)
     except Exception:
         return Plan([query], query)
@@ -82,7 +81,7 @@ def reflect_on_outcome(query: str, plan: Plan) -> str:
     try:
         steps_text = "\n".join(f"{i+1}. {r['step']}" for i, r in enumerate(plan.results))
         results_text = "\n".join(f"{i+1}. {'✓' if r['success'] else '✗'} {r['result'][:200]}" for i, r in enumerate(plan.results))
-        
+
         prompt = REFLECTION_PROMPT.format(query=query, steps=steps_text, results=results_text)
         return llm.chat.completions.create(
             model=chat_model, messages=[{"role": "user", "content": prompt}],
