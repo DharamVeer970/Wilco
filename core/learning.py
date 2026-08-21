@@ -12,15 +12,15 @@ Two of the "learning" ideas from the roadmap, kept self-contained and off by def
 Nothing here calls the LLM. It is deterministic bookkeeping (store + match + render),
 so it is fast and safe, and it layers on core/memory.py for persistence.
 
-Enable with  WILCO_FEEDBACK_ENABLED=1  (feedback loop) in .env.
+Auto-enabled: learns corrections + tool success without extra setup. Set WILCO_FEEDBACK_ENABLED=0 to disable.
 """
 import re
 
 from config import _flag
 from core.memory import get_preference, set_preference
 
-FEEDBACK_ENABLED = _flag("WILCO_FEEDBACK_ENABLED", False)
-PROMPT_TUNING_ENABLED = _flag("WILCO_PROMPT_TUNING_ENABLED", False)
+FEEDBACK_ENABLED = _flag("WILCO_FEEDBACK_ENABLED", True)
+PROMPT_TUNING_ENABLED = _flag("WILCO_PROMPT_TUNING_ENABLED", True)
 
 # corrections are just preferences; these keys never collide with voice/speed defaults
 _CORRECTION_KEY = "corrections"

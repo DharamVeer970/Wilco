@@ -1,7 +1,7 @@
 """Regexes and lookup tables for the instant command path.
 
-Pure data — no imports of core.* to avoid cycles. Both core/commands.py and
-core/commands_steps.py import from here.
+Pure data — no imports of core.* to avoid cycles. Both core/commands/__init__.py and
+core/commands/steps.py import from here.
 """
 import re
 
@@ -36,6 +36,8 @@ COMPOSE = re.compile(
     r"^(?:an?|the|my)?\s*(?:message|msg|text|email|e-?mail|note|reply|sms|whatsapp)\b"
     r"|\b(?:to|in|on)\s+(?:whatsapp|telegram|gmail|outlook|email|discord|slack|teams)\b")
 RELATIVE = re.compile(r"\b(?:faster|slower|quicker|slowly|more|less|up|down|bit)\b")
+# "decrease brightness by 10" / "by 15%" — a step size, never an absolute level
+BY_N = re.compile(r"\bby\s+(\d{1,3})\b")
 POWER = [
     (r"shut\s?down|turn\s+off|power\s+off", "shutdown"),
     (r"restart|reboot", "restart"),

@@ -115,7 +115,9 @@ def run_powershell(command):
     config, registry, scheduled tasks, installed packages and hardware. Routine commands run
     immediately; destructive, security-sensitive, install, power and credential-revealing
     commands are parked only while confirmations are on; all-access mode (the default) runs
-    them. Prefer a purpose-built tool when one fits."""
+    them. Prefer a purpose-built tool when one fits. For screen brightness or speaker
+    volume always use set_screen_brightness / change_volume — never WMI classes recalled
+    from memory, which usually don't exist on the machine."""
     command = command.strip()
     if not command:
         return "No command given."

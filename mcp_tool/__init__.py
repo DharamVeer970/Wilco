@@ -160,7 +160,7 @@ _TOOL_WORDS = {t["function"]["name"]: _token_set(
 # task starts with list_controls to learn names, so it has to be there before any "click".
 CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run_python",
               "web_search", "read_web_page", "list_my_tools", "self_check",
-              "list_controls", "click_control",
+              "list_controls", "click_control", "set_screen_brightness",
               "check_requirements", "install_requirements", "run_tests")
 
 

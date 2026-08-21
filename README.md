@@ -31,7 +31,7 @@ if the job needs them, and keeps talking afterwards.
 "how was your day"       -> no regex -> agent -> just talks
 ```
 
-The regex path in [core/commands.py](core/commands.py) stays because it costs nothing and
+The regex path in [core/commands/](core/commands/__init__.py) stays because it costs nothing and
 answers instantly. Everything it misses reaches the agent, which has the tools and can also
 hold a conversation — so an unmatched phrasing is a conversation, never a dead end.
 
@@ -170,7 +170,7 @@ Imports run one way, so there are no cycles:
 main.py -> core/commands.py -> core/agent.py -> mcp_tool/ -> windows/ -> config.py
 ```
 
-`mcp_tool/` must never import `core/commands.py`, or that becomes a loop.
+`mcp_tool/` must never import `core/commands/`, or that becomes a loop.
 
 ## Adding a tool
 

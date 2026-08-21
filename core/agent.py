@@ -18,7 +18,8 @@ from core.brain import PROMPTS, llm
 from core.analytics import record_tool_call
 from core.memory import add_conversation_turn, get_recent_conversations
 from core.learning import (record_correction, correction_prompt_snippet,
-                           is_correction)
+                           is_correction, suggest_reliable_tools, record_tuning_result)
+from core.analytics import analytics as _analytics
 from core.retry import retry_call
 from core import batch as _batch
 from windows import voice
@@ -74,6 +75,8 @@ def remember_local_turn(user_text, result):
 # Everything below is spoken aloud, so anything that reads like machinery has to go. The model
 # sometimes writes its tool calls out as ordinary text, or narrates what it is about to do;
 # read out loud that is noise, and the user asked for the answer, not the working.
+# It also sometimes wraps the answer in <TALK> tags - those are internal and must never be spoken.
+_TALK_TAG = re.compile(r"</?TALK\s*>|/?talk", re.I)
 _FENCE = re.compile(r"```.*?```", re.S)
 _BRACKETED = re.compile(r"\[[^\[\]]{0,300}\]")          # [Checking system settings...]
 _MARKDOWN = re.compile(r"\*{1,3}|#{1,6}\s*|`+")
@@ -97,6 +100,7 @@ def _speakable(text):
     """Strip tool-call JSON, stage directions, markdown and links out of what gets spoken."""
     if not text:
         return ""
+    text = _TALK_TAG.sub("", text)
     kept = []
     for line in _MARKDOWN.sub("", _FENCE.sub("", text)).splitlines():
         if any(word in line for word in _MACHINERY) or _META_LINE.match(line):
@@ -353,6 +357,9 @@ def _handle_text_outcome(message, acted, nudged, turn_tools, user_text):
     outcome = _no_calls(message, acted, nudged, turn_tools)
     if outcome == "spoke":
         _persist_turn(user_text, _romanise(_speakable(message.content)) or "Done.", turn_tools)
+        # learn which tools worked for this query - enhances next time
+        for name, result in turn_tools:
+            record_tuning_result(user_text, name, success=not result.startswith("Error"))
         _trim()
         return acted, nudged, True
     acted = acted or outcome == "ran"
@@ -370,8 +377,21 @@ def respond(text, already_done=()):
     user_text = text
     if is_correction(text):
         record_correction(text)
-    text = (f"{text}\n\n{correction_prompt_snippet()}".strip()
-            if correction_prompt_snippet() else text)
+    # auto-learn: inject past corrections + reliable tools hint. These ride in a system
+    # message, not appended to the user's words — the model must see the utterance exactly
+    # as spoken, and a hint glued onto it once leaked into memory and replies.
+    extra = []
+    corr = correction_prompt_snippet()
+    if corr:
+        extra.append(corr)
+    try:
+        hint = suggest_reliable_tools(user_text, _analytics)
+        if hint:
+            extra.append(hint)
+    except Exception:
+        pass
+    if extra:
+        history.append({"role": "system", "content": "\n\n".join(extra)})
 
     if already_done:
         text = (f"{text}\n\n(Already carried out, do not repeat: {'; '.join(already_done)}. "
@@ -408,6 +428,8 @@ def respond(text, already_done=()):
         reply = "That turned into more steps than I expected, so I've stopped. What were you after?"
         speak(reply)
         _persist_turn(user_text, reply, turn_tools)
+        for name, result in turn_tools:
+            record_tuning_result(user_text, name, success=not result.startswith("Error"))
     _trim()
 
 

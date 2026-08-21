@@ -29,8 +29,41 @@ def mute_sound():
 
 
 def set_screen_brightness(percent):
-    """Set screen brightness 0 to 100. Laptop panels only — external monitors can't be set."""
-    done = system.set_brightness(percent)
+    """Get or set screen brightness. Use for 'what is brightness', 'check brightness', 'declare brightness' (returns current), or 'set to 70', 'decrease by 10%' (changes it). Laptop panels only — external monitors can't be set. NEVER use run_powershell for brightness - always use this tool."""
+    raw = str(percent).strip().lower()
+    import re as _re
+    # query only: "what is brightness", "check", "declare", "how", "current" without a number or down/up -> report current
+    is_query = bool(_re.search(r"\b(?:what|check|declare|current|how|tell|show|get)\b", raw))
+    is_down = bool(_re.search(r"\b(?:down|decrease|reduce|lower|darker|dim)\b", raw))
+    is_up = bool(_re.search(r"\b(?:up|increase|raise|higher|brighter)\b", raw))
+    has_number = bool(_re.search(r"\d", raw))
+    if is_query and not (is_down or is_up or has_number):
+        cur = system.get_brightness()
+        if cur is None:
+            return "This screen doesn't report its brightness — likely an external monitor or unsupported driver."
+        return f"Current brightness is {cur} percent."
+    # relative: decrease/down/lower/reduce or increase/up/higher
+    if is_down or is_up:
+        cur = system.get_brightness()
+        if cur is None:
+            return "Can't read current brightness to adjust relatively - try setting an absolute value like 70."
+        m = _re.search(r"\d{1,3}", raw)
+        delta = int(m.group(0)) if m else 10
+        new = cur - delta if is_down else cur + delta
+        done = system.set_brightness(new)
+        if done is None:
+            return "This screen doesn't accept brightness changes — likely an external monitor."
+        return f"Brightness changed from {cur}% to {done} percent ({'down' if is_down else 'up'} {delta}%)."
+    # absolute: extract number
+    m = _re.search(r"-?\d{1,3}", raw)
+    val = m.group(0) if m else str(percent)
+    # if no number and it was a query-like phrase, report instead of failing
+    if not m and is_query:
+        cur = system.get_brightness()
+        if cur is None:
+            return "This screen doesn't report its brightness — likely an external monitor."
+        return f"Current brightness is {cur} percent."
+    done = system.set_brightness(val)
     if done is None:
         return "This screen doesn't accept brightness changes — likely an external monitor."
     return f"Brightness set to {done} percent."

@@ -114,9 +114,9 @@ EMPTY_TRIES = _number("WILCO_EMPTY_TRIES", 3, int)
 LLM_TIMEOUT = _number("WILCO_LLM_TIMEOUT", 30)
 # how many compact tool schemas the model sees each turn (0 = all of them, no routing)
 TOOL_LIMIT = _number("WILCO_TOOL_LIMIT", 24, int)
-# Opt-in only: conversation text is personal data. When enabled, the last completed turns
-# are saved locally and restored into a new session as short-term continuity context.
-MEMORY_ENABLED = _flag("WILCO_MEMORY_ENABLED", False)
+# Auto-learn: remembers last turns locally and learns corrections/preferences to improve next replies.
+# Stored in ~/.wilco/memory.json, never sent externally. Set WILCO_MEMORY_ENABLED=0 to disable.
+MEMORY_ENABLED = _flag("WILCO_MEMORY_ENABLED", True)
 MEMORY_TURNS = max(0, _number("WILCO_MEMORY_TURNS", 6, int))
 
 # ----------------------------------------------------------------- listening

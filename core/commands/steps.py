@@ -271,7 +271,7 @@ def _step_open(query, _spoken):
     if not m:
         return None
     name = APP_SUFFIX.sub("", m.group(1).strip(STRIP)).rstrip()
-    name = re.sub(r"\s+for\s+me(?:\s+to\s+(?>view|see))?$", "", name) 
+    name = re.sub(r"\s+for\s+me(?:\s+to\s+(?>view|see))?$", "", name)
     from core import context
     if (re.fullmatch(r"(?:it|that|this|(?:this|that|the) (?:file|image|screenshot|photo|picture))", name)
             and context.file and os.path.isfile(context.file)):

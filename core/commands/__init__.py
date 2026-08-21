@@ -20,7 +20,7 @@ from windows import voice
 from windows.speech import speak
 
 from core.commands.patterns import (
-    SITES, SEARCH, KIND_WORDS, ONLINE, DOWN, BRIGHT, TALK, SLOWER, COMPOSE, RELATIVE,
+    SITES, SEARCH, KIND_WORDS, ONLINE, DOWN, BRIGHT, TALK, SLOWER, COMPOSE, RELATIVE, BY_N,
     POWER, THIS_PC, MEDIA_WORDS, STRIP, WHICH, NAME, HINDI, _HINDI, PLAIN, RECALL,
     KIND_ASKED, FILLER, POLITE, TRAILING, SPLIT_RE, VERBS, QUESTION,
     STEP, CLOSE, WHAT_IS_IT, PLAY_IT, SCOPE, ITSELF, VAGUE, FILLER_RE,
@@ -475,15 +475,20 @@ def _do_speech_speed(target):
 
 
 def _do_brightness(target):
+    # "by N" is a step size ("decrease by 10" from 60 -> 50), never an absolute level —
+    # treating that 10 as the target used to slam the screen to 10 percent.
+    down = bool(DOWN.search(target))
+    by = BY_N.search(target)
     number = re.search(r"\d{1,3}", target)
-    current = system.get_brightness()
-    if number:
-        level = int(number.group(0))
-    elif current is not None:
-        level = current - 20 if DOWN.search(target) else current + 20
+    if by or not number:
+        current = system.get_brightness()
+        if current is None:
+            speak("This screen doesn't report its brightness, so I can't change it.")
+            return None
+        delta = int(by.group(1)) if by else 20
+        level = current - delta if down else current + delta
     else:
-        speak("This screen doesn't report its brightness, so I can't change it.")
-        return None
+        level = int(number.group(0))
     done = system.set_brightness(level)
     speak(f"Brightness set to {done} percent." if done else "I couldn't change the brightness.")
     return True
