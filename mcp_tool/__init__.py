@@ -176,7 +176,7 @@ def dispatch_tools(query, limit):
     tokens = _token_set(query)
     chosen = []
     if tokens:
-        ranked = sorted((len(tokens & _TOOL_WORDS[name]), name) for name in _TOOL_WORDS)
+        ranked = [(len(tokens & _TOOL_WORDS[name]), name) for name in _TOOL_WORDS]
         chosen = [name for _, name in sorted(ranked, reverse=True)[:limit]]
     chosen.extend(name for name in CORE_TOOLS if name not in chosen)
     want = set(chosen)
