@@ -34,4 +34,5 @@ jobs:
           HUGGINGFACE_API_KEY: dummy
         run: python -c "import mcp_tool; assert len(mcp_tool.REGISTRY) >= 87, len(mcp_tool.REGISTRY)"
       - name: Tests
+        shell: bash
         run: pytest -q || echo "no tests or tests skipped on CI"
