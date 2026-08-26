@@ -219,7 +219,7 @@ Email and WhatsApp accept a saved name or a raw address/number. Copy
 `contacts.example.json` to `contacts.json` (gitignored — it holds real addresses):
 
 ```json
-{ "rahul": { "email": "rahul@example.com", "phone": "+91 98765 43210" } }
+{ "rahul": { "email": "rahul@example.com", "phone": "+91 XXXXXXXXXX" } }
 ```
 
 PowerShell is split by [mcp_tool/shell_tool.py](mcp_tool/shell_tool.py): a command runs freely
