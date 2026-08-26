@@ -72,10 +72,7 @@ def _full_description(fn):
     return " ".join((inspect.getdoc(fn) or "").split())
 
 
-# The model gets a one-sentence summary instead of the full docstring. The full set of
-# ~87 docstrings is the single biggest token cost on every round trip — the first sentence
-# carries the "what it does and when to reach for it", which is what the model actually
-# needs; the full text stays available via list_my_tools and the MCP server.
+# The model gets a one-sentence summary instead of the full docstring.
 _TOOL_DESC_MAX = 160
 
 
@@ -105,8 +102,7 @@ TOOLS = [_schema(fn, _full_description(fn)) for fn in REGISTRY.values()]
 LLM_TOOLS = [_schema(fn, _summary(fn)) for fn in REGISTRY.values()]
 
 # Models occasionally use the most natural argument spelling instead of the schema spelling
-# (for example `path` for open_file).  Recover only unambiguous aliases; unknown parameters
-# still produce an explicit error rather than being silently discarded.
+# (for example `path` for open_file).
 _ARGUMENT_ALIASES = {
     "path": ("name", "folder_name"),
     "file_path": ("name", "path"),
@@ -134,12 +130,7 @@ def _normalise_arguments(fn, arguments):
             recovered = True
     return fixed, recovered
 
-# ----------------------------------------------------------------- tool dispatch
-# Reading 77 schemas is expensive and pointing the model at all of them makes its pick
-# worse, not better. Each turn it sees the `limit` tools whose own words overlap the
-# query, plus the always-on set below it can never be without: the confirmation protocol,
-# the three generic runners, web access, and the generic UI controls — so a miss routes to
-# run_powershell / list_my_tools instead of "I can't".
+# ------------------------------------ tool dispatch ---------------------------
 _STOPISH = frozenset("a an the and or but for with to of in on at by from you your he she "
                      "it we they be been is are was were do does did can could will would "
                      "should may might this that these those not no yes when where what "
@@ -154,13 +145,12 @@ def _token_set(text):
 _TOOL_WORDS = {t["function"]["name"]: _token_set(
     t["function"]["name"] + " " + t["function"]["description"]) for t in LLM_TOOLS}
 
-# Always on the wire — must never be missing, whatever the query looks like. Kept to the
-# essentials: the confirmation protocol, the three generic runners (so a miss can never
-# end in "I can't"), web access, knowing yourself, and the control discovery pair — a UI
-# task starts with list_controls to learn names, so it has to be there before any "click".
+# Always on the wire — must never be missing, whatever the query looks like.
 CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run_python",
               "web_search", "read_web_page", "list_my_tools", "self_check",
               "list_controls", "click_control", "set_screen_brightness",
+              "get_screen_brightness", "set_volume", "change_volume", "get_volume",
+              "mute_sound", "mute_state",
               "check_requirements", "install_requirements", "run_tests")
 
 

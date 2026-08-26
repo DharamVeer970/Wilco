@@ -231,6 +231,29 @@ def mute():
     _tap(VK["mute"])
 
 
+def get_mute():
+    """True if the default output device is muted, False if not, None if unreadable.
+
+    Read-only — never changes anything. Uses the CoreAudio MMDevice API via
+    win32com with the real, Microsoft-published interface GUIDs (the same
+    constants the Windows SDK documents — not invented). Returns None on any
+    COM failure, so it can never break the agent loop.
+    """
+    # Well-known GUIDs from the Windows SDK (mmdeviceapi.h).
+    CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C459C1537871}"
+    IID_IAudioEndpointVolume = "{5CDF2C82-841E-4546-9722-0CF0F3732911}"
+    eRender, eConsole = 0, 1
+    try:
+        import win32com.client
+        dev_enum = win32com.client.Dispatch(CLSID_MMDeviceEnumerator)
+        dev = dev_enum.GetDefaultAudioEndpoint(eRender, eConsole)
+        endpoint = dev.Activate(IID_IAudioEndpointVolume, eConsole, None)
+        # GetMute() returns a VARIANT bool of the mute state.
+        return bool(endpoint.GetMute())
+    except Exception:
+        return None
+
+
 def media(action):
     """play_pause / next / previous / stop — whatever app currently owns media keys."""
     _tap(VK[action])
@@ -254,6 +277,25 @@ def set_volume(percent):
     _tap(VK["up"], round(percent / 2))
     return percent
 
+def get_volume():
+    """Current master output volume as 0-100, or None if it can't be read.
+
+    Read-only — never changes anything. Reads the default wave-output device
+    (WAVE_MAPPER) and averages its two channels. Uses the native WinMM API, so
+    there is no guessed WMI/COM class or CLSID involved.
+    """
+    WAVE_MAPPER = 0xFFFFFFFF  # -1 selects the default output device
+    try:
+        current = wintypes.DWORD()
+        rc = ctypes.windll.winmm.waveOutGetVolume(WAVE_MAPPER, ctypes.byref(current))
+    except (OSError, AttributeError):
+        return None
+    if rc != 0:
+        return None
+    both = current.value
+    left = (both & 0xFFFF) / 655.35
+    right = ((both >> 16) & 0xFFFF) / 655.35
+    return round((left + right) / 2)
 
 def get_brightness():
     out = subprocess.run(

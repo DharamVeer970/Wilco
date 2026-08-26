@@ -1,4 +1,5 @@
 .env
+wilco.log
 contacts.json
 __pycache__/
 *.pyc

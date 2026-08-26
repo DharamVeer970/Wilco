@@ -16,7 +16,8 @@ from mcp_tool.pc.files import (  # noqa: F401
     manage_file, delete_file,
 )
 from mcp_tool.pc.system import (  # noqa: F401
-    set_volume, change_volume, mute_sound, set_screen_brightness, media_control,
+    set_volume, change_volume, mute_sound, mute_state, get_volume,
+    get_screen_brightness, set_screen_brightness, media_control,
     open_windows_settings, wifi_switch, wifi_password, system_info,
     check_windows_updates, power_action, take_screenshot, current_time,
     lock_screen, cancel_shutdown, empty_recycle_bin,

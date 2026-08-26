@@ -80,6 +80,18 @@ _TALK_TAG = re.compile(r"</?TALK\s*>|/?talk", re.I)
 _FENCE = re.compile(r"```.*?```", re.S)
 _BRACKETED = re.compile(r"\[[^\[\]]{0,300}\]")          # [Checking system settings...]
 _MARKDOWN = re.compile(r"\*{1,3}|#{1,6}\s*|`+")
+# Emoji and symbols can't be spoken — the TTS stalls or reads an emoji's name aloud. A
+# block-list is fragile (a malformed range here once matched ASCII letters), so instead
+# keep the characters speech can carry and drop the rest. Letters, numbers and combining
+# marks (category L/M/N) survive, so Devanagari matras and accented letters aren't stripped.
+_SYMBOL_KEEP = set(".,!?;:'\"()@#%…—–-_&/+-")
+def _clean_symbols(text):
+    import unicodedata as _ud
+    return "".join(ch for ch in text
+                   if ch.isspace() or _ud.category(ch)[0] in "LMN"
+                   or ch in _SYMBOL_KEEP or ch in "\u200d\u200c\ufe0f")
+# Leading list markers ("-", "•", "1.") read aloud as noise; drop just the marker, keep the words.
+_LIST = re.compile(r"^\s*(?:[-*•◦▪–]|\d{1,2}[.)])\s+")
 _MACHINERY = ("tool_call_id", "tool_name", "tool_calls", '"parameters"', '"arguments"')
 _META_LINE = re.compile(r"^\s*(?:note|disclaimer|reasoning|thought|action)\s*:", re.I)
 _PUNCT_ONLY = re.compile(r"^[\s\[\]{}(),:\"']*$")
@@ -102,12 +114,12 @@ def _speakable(text):
         return ""
     text = _TALK_TAG.sub("", text)
     kept = []
-    for line in _MARKDOWN.sub("", _FENCE.sub("", text)).splitlines():
+    for line in _clean_symbols(_MARKDOWN.sub("", _FENCE.sub("", text))).splitlines():
         if any(word in line for word in _MACHINERY) or _META_LINE.match(line):
             continue
         line = _BRACKETED.sub("", line)
         line = _URL.sub("", line)
-        line = _EMPTY_PAREN.sub("", line)
+        line = _EMPTY_PAREN.sub("", _LIST.sub("", line))
         line = _WS_SQUASH.sub(" ", line).strip()
         if _PUNCT_ONLY.match(line):
             continue
@@ -134,9 +146,14 @@ _WRITTEN = re.compile(r"[\[{].*[\]}]", re.S)
 _CLAIMED = re.compile(
     r"\b(?:i(?:'ve| have)?\s+(?:just\s+|now\s+)?(?:opened|set|changed|closed|sent|created|"
     r"deleted|increased|decreased|reduced|switched|started|launched|turned|played|typed|"
-    r"saved|updated|added|removed|adjusted)|"
-    r"(?:reminder|alarm|timer|volume|brightness|speed)\s+(?:is\s+|has\s+been\s+)?set|"
-    r"(?:it'?s|that'?s|all)\s+done)\b", re.I)
+    r"saved|updated|added|removed|adjusted)|\b(?:reminder|alarm|timer|volume|brightness|speed)"
+    r"\s+(?:is\s+|has\s+been\s+)?set\b|"
+    r"\b(?:it'?s|that'?s|all)\s+done\b|"
+    r"\b(?:turned|set|cranked|raised|lowered|boosted|changed)\s+(?:the\s+)?"
+    r"(?:volume|brightness|sound)\s+(?:up|down)\b|"
+    r"\bvolume\s+(?:up|down)\b|\b(?:muted|unmuted|dimmed|brightened)\b|"
+    r"\b(?:volume|brightness|sound|speed)\s+(?:is|is now|currently is|now)\s+"
+    r"(?:at\s+)?\d+\s?(?:percent|%)?\b)", re.I)
 # Diagnostics can accompany fabricated claims that defaults or code changed. Those require
 # proof of a completed edit in this turn, not merely proof that some tool happened to run.
 _PERSISTENT_CLAIM = re.compile(
@@ -320,6 +337,18 @@ def _has_completed_edit(turn_tools):
                for name, result in turn_tools)
 
 
+def _failed_tool_names(turn_tools):
+    """Tools in this turn whose result was an error, not a success.
+
+    The model can present an errored call as if it succeeded — the exact false-success
+    from the harness. Naming the failures lets the next prompt correct it honestly.
+    """
+    return tuple(name for name, result in turn_tools
+                 if result.startswith(("Error", "Wrong arguments", "No tool called",
+                                       "NOT DONE"))
+                 or result.lower().startswith(f"{name} failed:"))
+
+
 def _no_calls(message, acted, nudged, turn_tools=()):
     """Deal with a message that called nothing. 'ran', 'nudged' or 'spoke'."""
     written = _written_calls(message.content)
@@ -336,6 +365,16 @@ def _no_calls(message, acted, nudged, turn_tools=()):
         return "nudged"
     if not acted and not nudged and _CLAIMED.search(spoken):
         _nudge()
+        return "nudged"
+    failed = _failed_tool_names(turn_tools)
+    if failed and _CLAIMED.search(spoken):
+        # A tool errored earlier in this turn, yet the reply presents it as done.
+        print(f"  [tool(s) {', '.join(failed)} errored - not a success, asking again]")
+        history.append({"role": "user", "content":
+                        "The tool(s) " + ", ".join(failed) +
+                        " returned an error this turn, so that action did not happen. "
+                        "Tell the user exactly which tool errored and what the error was, "
+                        "or retry it once and then report honestly."})
         return "nudged"
     speak(spoken or "Done.")
     return "spoke"

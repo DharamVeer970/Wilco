@@ -15,6 +15,16 @@ def set_volume(percent):
     return f"Volume set to {system.set_volume(percent)} percent."
 
 
+def get_volume():
+    """Report the current volume level, 0 to 100. Use for 'what's the volume', 'check the
+    volume', 'how loud is it', 'tell me the volume'. This only reads — it never changes
+    anything. Never use run_powershell for volume; use this, set_volume or change_volume."""
+    current = system.get_volume()
+    if current is None:
+        return "Couldn't read the volume level on this audio device."
+    return f"The volume is at {current} percent."
+
+
 def change_volume(direction, steps=5):
     """Nudge the volume up or down without setting an exact number. direction: up or down."""
     way = "down" if direction.lower().startswith("d") else "up"
@@ -26,6 +36,28 @@ def mute_sound():
     """Toggle mute on and off."""
     system.mute()
     return "Toggled mute."
+
+
+def mute_state():
+    """Report whether the default audio output is currently muted. Use for
+    'am i muted', 'is sound muted', 'are we muted', 'mute status'. Read-only —
+    never changes anything. Returns 'mute is on/off' or 'couldn't read on this
+    system'."""
+    state = system.get_mute()
+    if state is None:
+        return "Couldn't read the mute state on this device."
+    return "Mute is on." if state else "Mute is off."
+
+
+def get_screen_brightness():
+    """Report the current screen brightness as a percentage (0-100). Use for
+    'what is the brightness', 'check brightness', 'how bright is the screen',
+    'tell me the brightness'. Read-only — never changes anything. Laptop panels
+    only; external monitors usually report nothing."""
+    cur = system.get_brightness()
+    if cur is None:
+        return "This screen doesn't report its brightness — likely an external monitor or unsupported driver."
+    return f"Current brightness is {cur} percent."
 
 
 def set_screen_brightness(percent):
