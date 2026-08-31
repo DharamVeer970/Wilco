@@ -291,7 +291,7 @@ Provider support notes:
 | `cohere` | `COHERE_API_KEY` | `command-a-03-2025` |
 | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
-| `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `groq` | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
 | `huggingface` | `HUGGINGFACE_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct` |
 | `openrouter` | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct` |
 | `nvidia` | `NVIDIA_API_KEY` | `nvidia/llama-3.3-nemotron-super-49b-v1.5` |
@@ -305,11 +305,15 @@ restart, done. `.env.example` lists all of them with their defaults.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `HUGGINGFACE_API_KEY` | *required* | Whisper speech-to-text |
+| `NVIDIA_API_KEY` | *optional* | NVIDIA chat (not STT — NVIDIA's API has no transcription endpoint) |
+| `GROQ_API_KEY` | *required for STT* | Groq Whisper speech-to-text (primary) |
 | `COHERE_API_KEY` | *required for the default provider* | Chat + tool calling |
 | `WILCO_PLATFORM` | `cohere` | openai, anthropic, cohere, huggingface, groq, openrouter, nvidia, ollama (change WILCO_CHAT_MODEL to match) |
 | `WILCO_CHAT_MODEL` | `command-a-03-2025` | The model on that provider (can be provider-specific, e.g. nvidia/llama-3.3-nemotron-super-49b-v1.5) |
-| `WILCO_STT_MODEL` | `openai/whisper-large-v3` | Which Whisper does the listening |
+| `WILCO_CHAT_FALLBACKS` | `openrouter,cohere` | Chat providers tried in order when the primary rate-limits or fails; entries without a key are skipped |
+| `WILCO_STT_PROVIDER` | `groq` | groq, openai, openrouter, huggingface, nvidia, or custom |
+| `WILCO_STT_FALLBACKS` | `openrouter,huggingface` | Providers tried in order when the primary fails; entries without a key are skipped |
+| `WILCO_STT_MODEL` | `whisper-large-v3-turbo` | Which Whisper/ASR model does the listening |
 | `WILCO_STT_LANGUAGE` | blank | Optional ISO language code, e.g. `hi` for Hindi/Hinglish; blank auto-detects |
 | `WILCO_PAUSE` | `2.5` | Seconds of silence before it decides you've finished |
 | `WILCO_MIN_PHRASE` / `WILCO_MAX_PHRASE` | `0.4` / `45` | Shortest and longest utterance |

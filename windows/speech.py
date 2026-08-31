@@ -20,7 +20,7 @@ except ImportError:
     sd = None
 
 import config
-from config import stt_api_key, stt_base_url, stt_language, stt_model, stt_transport
+from config import stt_language
 from windows.voice import speak
 
 r = sr.Recognizer()
@@ -31,10 +31,6 @@ r.non_speaking_duration = min(0.5, config.PAUSE_SECONDS / 2)
 r.phrase_threshold = config.MIN_PHRASE_SECONDS
 r.dynamic_energy_threshold = True
 
-hf = (InferenceClient(
-    api_key=stt_api_key, provider="hf-inference",
-    headers={"Content-Type": "audio/wav"}, timeout=30,
-) if stt_transport == "huggingface" else None)
 _calibrated = False
 _backend = None
 
@@ -58,13 +54,13 @@ def _wav(frames, sample_rate):
     return output.getvalue()
 
 
-def _transcribe_openai_compatible(wav_data):
+def _transcribe_openai_compatible(settings, wav_data):
     """Send WAV audio to any OpenAI-compatible transcription endpoint."""
     response = requests.post(
-        f"{stt_base_url}/audio/transcriptions",
-        headers={"Authorization": f"Bearer {stt_api_key}"},
+        f"{settings['base_url']}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {settings['api_key']}"},
         files={"file": ("speech.wav", wav_data, "audio/wav")},
-        data={"model": stt_model, "response_format": "json",
+        data={"model": settings["model"], "response_format": "json",
               **({"language": stt_language} if stt_language else {})},
         timeout=30,
     )
@@ -80,13 +76,13 @@ def _transcribe_openai_compatible(wav_data):
     return text
 
 
-def _transcribe_openrouter(wav_data):
+def _transcribe_openrouter(settings, wav_data):
     """Use OpenRouter's documented JSON/base64 STT endpoint."""
     response = requests.post(
-        f"{stt_base_url}/audio/transcriptions",
-        headers={"Authorization": f"Bearer {stt_api_key}", "Content-Type": "application/json"},
+        f"{settings['base_url']}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {settings['api_key']}", "Content-Type": "application/json"},
         json={"input_audio": {"data": base64.b64encode(wav_data).decode("ascii"), "format": "wav"},
-              "model": stt_model},
+              "model": settings["model"]},
         timeout=30,
     )
     if not response.ok:
@@ -101,25 +97,47 @@ def _transcribe_openrouter(wav_data):
     return text
 
 
-def _transcribe_hf(audio):
+def _transcribe_hf(settings, wav_data):
     """Ask the Hugging Face Inference API for text, pinned to the configured language when set."""
+    client = InferenceClient(
+        api_key=settings["api_key"], provider="hf-inference",
+        headers={"Content-Type": "audio/wav"}, timeout=30,
+    )
     kwargs = {"language": stt_language} if stt_language else {}
-    return hf.automatic_speech_recognition(audio, model=stt_model, **kwargs).text
+    return client.automatic_speech_recognition(wav_data, model=settings["model"], **kwargs).text
+
+
+_TRANSPORTS = {
+    "openai": _transcribe_openai_compatible,
+    "openrouter": _transcribe_openrouter,
+    "huggingface": _transcribe_hf,
+}
 
 
 def _transcribe(wav_data):
-    """Use the selected provider while keeping the microphone loop provider-neutral."""
-    transports = {
-        "openai": _transcribe_openai_compatible,
-        "openrouter": _transcribe_openrouter,
-        "huggingface": _transcribe_hf,
-    }
-    return transports[stt_transport](wav_data)
+    """Try each configured provider in order; the first one that answers wins."""
+    failures = []
+    for index, settings in enumerate(config.STT_CHAIN):
+        if not settings["api_key"]:
+            print(f"STT: {settings['provider']} skipped — no {settings['key_env']} key set.")
+            continue
+        try:
+            return _TRANSPORTS[settings["transport"]](settings, wav_data)
+        except Exception as error:
+            failures.append(f"{settings['provider']}: {error}")
+            print(f"STT: {settings['provider']} failed ({error}).")
+            following = [entry for entry in config.STT_CHAIN[index + 1:] if entry["api_key"]]
+            if following:
+                print(f"STT: falling back to {following[0]['provider']}.")
+    raise RuntimeError("every speech provider failed — " + " | ".join(failures))
 
 
 def _recognition_error_message(error):
     """A useful spoken recovery hint for the common provider-side failures."""
     detail = str(error).lower()
+    if "every speech provider failed" in detail:
+        return ("Every speech provider failed just now. Check your internet connection and the "
+                "speech API keys in your configuration, then try again.")
     if "429" in detail or "rate limit" in detail:
         return "The speech provider's limit is busy right now. Please wait a moment and try again."
     if "401" in detail or "403" in detail or "api key" in detail:

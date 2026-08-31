@@ -41,7 +41,7 @@ def roots():
     return _text("WILCO_ROOT", "")
 
 
-# ----------------------------------------------------------------- which brain
+# -------------------------------- which brain ---------------------------------
 PLATFORMS = {
     "openai": (None, "OPENAI_API_KEY"),
     "anthropic": ("https://api.anthropic.com/v1/", "ANTHROPIC_API_KEY"),
@@ -53,7 +53,7 @@ PLATFORMS = {
     "ollama": ("http://localhost:11434/v1", None),
 }
 platform = _text("WILCO_PLATFORM", "cohere")
-# Model can be provider-specific (e.g. "nvidia/llama-3.3-nemotron-super-49b-v1.5") or just a model name
+
 # The platform determines which API key and base URL to use automatically
 chat_model = _text("WILCO_CHAT_MODEL", "command-a-03-2025")
 
@@ -62,6 +62,10 @@ chat_model = _text("WILCO_CHAT_MODEL", "command-a-03-2025")
 # transport: openai = multipart /audio/transcriptions; openrouter = JSON/base64 equivalent;
 # huggingface = its Inference API protocol.
 STT_PROVIDER_DEFAULTS = {
+    "nvidia": {
+        "key_env": "NVIDIA_API_KEY", "base_url": "https://integrate.api.nvidia.com/v1",
+        "transport": "openai", "model": "nisb",
+    },
     "groq": {
         "key_env": "GROQ_API_KEY", "base_url": "https://api.groq.com/openai/v1",
         "transport": "openai", "model": "whisper-large-v3-turbo",
@@ -85,8 +89,8 @@ stt_transport = _text("WILCO_STT_TRANSPORT", _stt_defaults.get("transport", "ope
 stt_base_url = _text("WILCO_STT_BASE_URL", _stt_defaults.get("base_url", "")).rstrip("/")
 stt_key_env = _text("WILCO_STT_KEY_ENV", _stt_defaults.get("key_env", ""))
 stt_model = _text("WILCO_STT_MODEL", _stt_defaults.get("model", ""))
-# Leave blank for automatic detection. Set this to an ISO-639-1 code such as "hi" when
-# Whisper repeatedly mistakes a multilingual speaker for another language.
+
+# Leave blank for automatic detection.
 stt_language = _text("WILCO_STT_LANGUAGE", "").lower()
 
 if platform not in PLATFORMS:
@@ -95,6 +99,42 @@ if platform not in PLATFORMS:
 base_url, key_var = PLATFORMS[platform]
 apikey = os.environ[key_var] if key_var else "ollama"
 
+# Chat rate limits are real: free tiers 429 after a couple of quick turns, and waiting out the
+# provider's retry-after stalls the conversation for half a minute. Instead, when the primary
+# chat provider fails or rate-limits, Wilco retries the same request on these platforms in order.
+# Each fallback uses its own platform key from PLATFORMS and its own default model; entries
+# without a key configured are skipped.
+CHAT_MODEL_DEFAULTS = {
+    "openai": "gpt-4o",
+    "cohere": "command-a-03-2025",
+    "groq": "openai/gpt-oss-120b",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct",
+    "nvidia": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "huggingface": "meta-llama/Llama-3.3-70B-Instruct",
+}
+CHAT_FALLBACKS = [name.strip().lower() for name in
+                  _text("WILCO_CHAT_FALLBACKS", "openrouter,cohere").split(",") if name.strip()]
+
+
+def _chat_chain():
+    """The ordered chat provider chain: the chosen platform first, then the fallbacks."""
+    chain, seen = [], set()
+    for name in [platform] + CHAT_FALLBACKS:
+        if name in seen or name not in PLATFORMS:
+            continue
+        seen.add(name)
+        entry_base, entry_key_var = PLATFORMS[name]
+        entry_key = os.environ.get(entry_key_var, "") if entry_key_var else "ollama"
+        if entry_key_var and not entry_key:
+            continue  # no key for this fallback, so it could never answer
+        chain.append({"platform": name, "base_url": entry_base, "api_key": entry_key,
+                      "model": chat_model if name == platform
+                      else CHAT_MODEL_DEFAULTS.get(name, chat_model)})
+    return chain
+
+
+CHAT_CHAIN = _chat_chain()
+
 if stt_transport not in ("openai", "openrouter", "huggingface"):
     raise SystemExit("WILCO_STT_TRANSPORT must be openai, openrouter, or huggingface.")
 
@@ -102,10 +142,37 @@ if not stt_model or (stt_transport != "huggingface" and not stt_base_url):
     raise SystemExit("Set WILCO_STT_MODEL and WILCO_STT_BASE_URL for a custom STT provider.")
 stt_api_key = _text("WILCO_STT_API_KEY", "") or os.environ.get(stt_key_env, "")
 
-if not stt_api_key:
+# When the primary speech provider fails (bad URL, 404, rate limit, quota), Wilco walks down
+# this comma-separated list of fallback providers in order before giving up. Each fallback
+# uses its own STT_PROVIDER_DEFAULTS entry: its own key, base URL, transport, and model.
+STT_FALLBACKS = [name.strip().lower() for name in
+                 _text("WILCO_STT_FALLBACKS", "openrouter,huggingface").split(",") if name.strip()]
+
+
+def _stt_chain():
+    """The ordered provider chain: the chosen provider (with its .env overrides) first."""
+    chain = [{"provider": stt_provider, "key_env": stt_key_env, "base_url": stt_base_url,
+              "transport": stt_transport, "model": stt_model, "api_key": stt_api_key}]
+    for name in STT_FALLBACKS:
+        if name == stt_provider or name not in STT_PROVIDER_DEFAULTS:
+            continue
+        defaults = STT_PROVIDER_DEFAULTS[name]
+        chain.append({
+            "provider": name, "key_env": defaults["key_env"],
+            "base_url": defaults["base_url"].rstrip("/"),
+            "transport": defaults["transport"], "model": defaults["model"],
+            "api_key": os.environ.get(defaults["key_env"], ""),
+        })
+    return chain
+
+
+STT_CHAIN = _stt_chain()
+
+if not any(entry["api_key"] for entry in STT_CHAIN):
     raise SystemExit(
-        f"No speech-to-text API key is configured for {stt_provider}. Set WILCO_STT_API_KEY "
-        f"or put the token in {stt_key_env or 'the variable named by WILCO_STT_KEY_ENV'}."
+        "No speech-to-text API key is configured. Set WILCO_STT_API_KEY, the key named by "
+        f"WILCO_STT_KEY_ENV ({stt_key_env}), or a fallback key such as GROQ_API_KEY, "
+        "OPENROUTER_API_KEY, or HUGGINGFACE_API_KEY."
     )
 
 MAX_STEPS = _number("WILCO_MAX_STEPS", 6, int)
@@ -114,18 +181,19 @@ EMPTY_TRIES = _number("WILCO_EMPTY_TRIES", 3, int)
 LLM_TIMEOUT = _number("WILCO_LLM_TIMEOUT", 30)
 # how many compact tool schemas the model sees each turn (0 = all of them, no routing)
 TOOL_LIMIT = _number("WILCO_TOOL_LIMIT", 24, int)
+
 # Auto-learn: remembers last turns locally and learns corrections/preferences to improve next replies.
 # Stored in ~/.wilco/memory.json, never sent externally. Set WILCO_MEMORY_ENABLED=0 to disable.
 MEMORY_ENABLED = _flag("WILCO_MEMORY_ENABLED", True)
 MEMORY_TURNS = max(0, _number("WILCO_MEMORY_TURNS", 6, int))
 
-# ----------------------------------------------------------------- listening
+# -------------------------------- listening ---------------------------------
 PAUSE_SECONDS = _number("WILCO_PAUSE", 2.5)
 MIN_PHRASE_SECONDS = _number("WILCO_MIN_PHRASE", 0.4)
 MAX_PHRASE_SECONDS = _number("WILCO_MAX_PHRASE", 45)
 LISTEN_TIMEOUT = _number("WILCO_LISTEN_TIMEOUT", 8)
 
-# ----------------------------------------------------------------- speaking
+# -------------------------------- speaking ---------------------------------
 VOICE = _text("WILCO_VOICE", "ava")
 SPEED = _number("WILCO_SPEED", 25, int)
 SPEED_STEP = _number("WILCO_SPEED_STEP", 15, int)
@@ -136,25 +204,25 @@ SPEECH_CACHEABLE = _number("WILCO_SPEECH_CACHE", 120, int)
 # Prevent an identical reply from being played twice when two code paths finish together.
 SPEECH_DEDUP_SECONDS = _number("WILCO_SPEECH_DEDUP_SECONDS", 2.0)
 
-# ----------------------------------------------------------------- how it decides
+# ------------------------- how it decides ----------------------------------------
 FUZZ_MIN = _number("WILCO_FUZZ_MIN", 70, int)
 FAST_WORDS = _number("WILCO_FAST_WORDS", 9, int)
 LIST_LIMIT = _number("WILCO_LIST_LIMIT", 40, int)
 MAX_CONTROLS = _number("WILCO_MAX_CONTROLS", 300, int)
 ASK_WHAT_NEXT = _flag("WILCO_ASK_WHAT_NEXT", False)
-# All-access mode: every command executes immediately, no "are you sure?" questions — Wi-Fi
-# passwords, sends, edits, installs and shutdown included. The command is the permission.
+
+# All-access mode: every command executes immediately, no "are you sure?"
 # Set WILCO_ALWAYS_ACT=0 in .env to restore the confirmation gate.
 ALWAYS_ACT = _flag("WILCO_ALWAYS_ACT", True)
 
-# ----------------------------------------------------------------- running things
+# ---------------------------------------- running things ----------------------------------------
 SHELL_TIMEOUT = _number("WILCO_SHELL_TIMEOUT", 25, int)
 MAX_OUTPUT = _number("WILCO_MAX_OUTPUT", 3000, int)
 TEXT_LIMIT = _number("WILCO_TEXT_LIMIT", 6000, int)
 BROWSER_WAIT = _number("WILCO_BROWSER_WAIT", 12.0)
 BROWSER_GRACE = _number("WILCO_BROWSER_GRACE", 2.5)
 
-# ----------------------------------------------------------------- files and mail
+# ---------------------------------------- files and mail ----------------------------------------
 SMTP = _text("WILCO_SMTP", "smtp.gmail.com:465")
 EMAIL = _text("WILCO_EMAIL", "")
 EMAIL_PASSWORD = os.environ.get("WILCO_EMAIL_PASSWORD", "")

@@ -31,6 +31,7 @@ jobs:
         env:
           COHERE_API_KEY: dummy
           GROQ_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
           HUGGINGFACE_API_KEY: dummy
         run: python -c "import mcp_tool; assert len(mcp_tool.REGISTRY) >= 87, len(mcp_tool.REGISTRY)"
       - name: Tests

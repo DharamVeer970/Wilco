@@ -156,12 +156,15 @@ def self_check():
         problems += 1
     lines.append(f"git bash: {bash or 'MISSING — file searching will not work'}")
 
-    configured = [k for k in ("COHERE_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY",
-                              "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY")
+    configured = [k for k in ("COHERE_API_KEY", "OPENAI_API_KEY", "NVIDIA_API_KEY",
+                              "ANTHROPIC_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
+                              "HUGGINGFACE_API_KEY")
                   if os.environ.get(k)]
-    if "HUGGINGFACE_API_KEY" not in configured:
+    if not any(os.environ.get(k) for k in ("GROQ_API_KEY", "OPENROUTER_API_KEY",
+                                           "HUGGINGFACE_API_KEY", "NVIDIA_API_KEY")):
         problems += 1
-        lines.append("speech-to-text key: MISSING — HUGGINGFACE_API_KEY is required")
+        lines.append("speech-to-text key: MISSING — set GROQ_API_KEY (fallbacks: "
+                     "OPENROUTER_API_KEY, HUGGINGFACE_API_KEY)")
     else:
         # names only, never values
         lines.append(f"keys set: {', '.join(configured)}")
