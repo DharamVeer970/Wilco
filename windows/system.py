@@ -33,9 +33,7 @@ KEYS.update({c: ord(c.upper()) for c in "abcdefghijklmnopqrstuvwxyz"})  # letter
 KEYS.update({d: ord(d) for d in "0123456789"})                  # digits: '0' = 0x30
 KEYS["refresh"] = KEYS["f5"]
 
-# Held down while another key is tapped. Their absence is why "clear this text" was
-# impossible: ctrl+a can only be done by holding ctrl, never by pressing ctrl then a as two
-# separate keystrokes, which is exactly what was attempted and could never have worked.
+# Held while another key taps — combos like ctrl+a are impossible as two separate keystrokes.
 MODIFIERS = {"ctrl": VK_CTRL, "control": VK_CTRL, "ctl": VK_CTRL,
              "alt": VK_ALT, "shift": 0x10,
              "win": VK_LWIN, "windows": VK_LWIN, "super": VK_LWIN, "meta": VK_LWIN}
@@ -97,8 +95,7 @@ def _combo(modifier, vk):
     _user32.keybd_event(modifier, 0, KEYUP, 0)
 
 
-# web browsers only. File Explorer is deliberately absent: Ctrl+W there closes the whole
-# window, not a tab, so treating it as a browser loses the user's folder view
+# Browsers only — File Explorer's Ctrl+W closes the whole window, not a tab.
 BROWSERS = ("chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium")
 
 
@@ -169,9 +166,7 @@ def window_box(hwnd):
     return (left, top, right, bottom) if right > left and bottom > top else None
 
 
-# Ctrl+W closes a tab in far more than browsers. VS Code, Explorer, Terminal and Notepad all
-# have tabs, and treating only browsers as tabbed meant "close this tab" said in VS Code went
-# hunting for a browser and shut an unrelated tab in it.
+# Apps beyond browsers whose Ctrl+W closes a tab — "close this tab" in VS Code once shut a browser tab instead.
 TABBED = BROWSERS + ("visual studio code", "explorer", "terminal", "notepad",
                      "sublime", "notepad++", "atom", "obsidian")
 

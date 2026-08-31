@@ -33,6 +33,8 @@ r.dynamic_energy_threshold = True
 
 _calibrated = False
 _backend = None
+_SESSION = requests.Session()
+_HF_CLIENTS: dict[str, InferenceClient] = {}
 
 
 def _level(samples):
@@ -56,7 +58,7 @@ def _wav(frames, sample_rate):
 
 def _transcribe_openai_compatible(settings, wav_data):
     """Send WAV audio to any OpenAI-compatible transcription endpoint."""
-    response = requests.post(
+    response = _SESSION.post(
         f"{settings['base_url']}/audio/transcriptions",
         headers={"Authorization": f"Bearer {settings['api_key']}"},
         files={"file": ("speech.wav", wav_data, "audio/wav")},
@@ -78,7 +80,7 @@ def _transcribe_openai_compatible(settings, wav_data):
 
 def _transcribe_openrouter(settings, wav_data):
     """Use OpenRouter's documented JSON/base64 STT endpoint."""
-    response = requests.post(
+    response = _SESSION.post(
         f"{settings['base_url']}/audio/transcriptions",
         headers={"Authorization": f"Bearer {settings['api_key']}", "Content-Type": "application/json"},
         json={"input_audio": {"data": base64.b64encode(wav_data).decode("ascii"), "format": "wav"},
@@ -99,10 +101,14 @@ def _transcribe_openrouter(settings, wav_data):
 
 def _transcribe_hf(settings, wav_data):
     """Ask the Hugging Face Inference API for text, pinned to the configured language when set."""
-    client = InferenceClient(
-        api_key=settings["api_key"], provider="hf-inference",
-        headers={"Content-Type": "audio/wav"}, timeout=30,
-    )
+    key = settings["api_key"]
+    client = _HF_CLIENTS.get(key)
+    if client is None:
+        client = InferenceClient(
+            api_key=key, provider="hf-inference",
+            headers={"Content-Type": "audio/wav"}, timeout=30,
+        )
+        _HF_CLIENTS[key] = client
     kwargs = {"language": stt_language} if stt_language else {}
     return client.automatic_speech_recognition(wav_data, model=settings["model"], **kwargs).text
 

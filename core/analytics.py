@@ -1,5 +1,7 @@
 """Analytics for Wilco - tracks tool usage, performance, and success rates."""
 import json
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -67,17 +69,32 @@ class Analytics:
     def __init__(self):
         self.tool_stats: Dict[str, ToolStats] = {}
         self.session_start = datetime.now()
+        self._pending = 0
         self._load()
 
     def _load(self):
         try:
             data = json.loads(STATS_FILE.read_text(encoding="utf-8"))
+            # If file contains test artifact, it's polluted from `python tests/test_wilco.py`
+            # (350+ calls). Delete it for clean live session — don't remove fallback.
+            if "no_such_tool" in data.get("tools", {}):
+                try:
+                    STATS_FILE.unlink()
+                except OSError:
+                    pass
+                self.tool_stats = {}
+                return
             for name, tool_data in data.get("tools", {}).items():
                 self.tool_stats[name] = ToolStats.from_dict(tool_data)
         except (FileNotFoundError, json.JSONDecodeError, KeyError):
             self.tool_stats = {}
 
     def _save(self):
+        # Don't pollute live stats file when running under pytest or test_wilco
+        if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
+            return
+        if any("test_wilco" in m for m in sys.modules) or os.environ.get("PYTEST_CURRENT_TEST"):
+            return
         try:
             data = {
                 "session_start": self.session_start.isoformat(),
@@ -88,11 +105,20 @@ class Analytics:
         except OSError:
             pass
 
+    def flush(self):
+        """Force write pending stats (call at turn end)."""
+        if self._pending:
+            self._save()
+            self._pending = 0
+
     def record_execution(self, tool_name: str, success: bool, duration: float, error: str = None):
         if tool_name not in self.tool_stats:
             self.tool_stats[tool_name] = ToolStats(tool_name)
         self.tool_stats[tool_name].record_call(success, duration, error)
-        self._save()
+        self._pending += 1
+        # Batch: flush every 10 calls to avoid per-tool disk write in hot loop
+        if self._pending >= 10:
+            self.flush()
 
     def get_tool_stats(self, tool_name: str) -> Optional[ToolStats]:
         return self.tool_stats.get(tool_name)

@@ -2,6 +2,9 @@
 
 Conversation and command routing both live in core/agent.py now — this module just owns the
 client and the one-shot "write it to a file" helper.
+
+Prompt caching: providers cache longest stable prefix. System prompt kept stable
+and for Anthropic marked with cache_control. Others (OpenAI/Groq) are implicit.
 """
 import os
 import re
@@ -9,6 +12,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+import config as _config
 from config import CHAT_CHAIN, LLM_TIMEOUT, apikey, base_url, chat_model
 from windows.speech import speak
 
@@ -33,15 +37,35 @@ class _ChainCompletions:
 
     def create(self, **kwargs):
         # callers pass the primary platform's model; each fallback substitutes its own
+        # Prompt caching: Anthropic wire format needs cache_control on system prefix
+        if "messages" in kwargs and _config.PROMPT_CACHE:
+            kwargs["messages"] = _cached_messages(kwargs["messages"])
         requested = kwargs.get("model")
         errors = []
         for index, (entry, client) in enumerate(self._chain):
             if not requested or requested == chat_model:
                 kwargs["model"] = entry["model"]
             try:
-                return client.chat.completions.create(**kwargs)
+                resp = client.chat.completions.create(**kwargs)
+                # Empty content with no tool_calls is treated as failure (e.g. max_tokens too low)
+                msg = resp.choices[0].message if resp.choices else None
+                if msg and not (msg.content or msg.tool_calls):
+                    raise RuntimeError("empty generation — no content or tool_calls")
+                return resp
             except Exception as error:
-                summary = str(error).strip().splitlines()[0][:160] if str(error).strip() else type(error).__name__
+                err_text = str(error)
+                # Detect empty generation to retry without max_tokens limit
+                if "empty generation" in err_text and "max_tokens" in kwargs:
+                    kwargs.pop("max_tokens", None)
+                    # retry same provider without the low limit before falling back
+                    try:
+                        resp = client.chat.completions.create(**kwargs)
+                        msg = resp.choices[0].message if resp.choices else None
+                        if msg and (msg.content or msg.tool_calls):
+                            return resp
+                    except Exception:
+                        pass
+                summary = err_text.strip().splitlines()[0][:160] if err_text.strip() else type(error).__name__
                 errors.append(f"{entry['platform']}: {summary}")
                 print(f"CHAT: {entry['platform']} failed ({summary}).")
                 following = self._chain[index + 1:]
@@ -67,9 +91,29 @@ llm = _ChainLLM(CHAT_CHAIN)
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 
 
+def _cached_messages(messages):
+    """explicit cache: mark stable system prefix as cacheable.
+
+    For OpenAI/Groq implicit caching we keep prefix stable — no wire change.
+    """
+    if not _config.PROMPT_CACHE or _config.platform != "anthropic":
+        return messages
+    out = []
+    for i, m in enumerate(messages):
+        if i == 0 and m.get("role") == "system" and isinstance(m.get("content"), str):
+            out.append({
+                "role": "system",
+                "content": [{"type": "text", "text": m["content"], "cache_control": {"type": "ephemeral"}}],
+            })
+        else:
+            out.append(m)
+    return out
+
+
 def complete(messages):
+    msgs = _cached_messages(messages)
     return llm.chat.completions.create(
-        model=chat_model, messages=messages
+        model=chat_model, messages=msgs
     ).choices[0].message.content
 
 

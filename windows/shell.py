@@ -9,8 +9,7 @@ from ctypes import wintypes
 from rapidfuzz import fuzz, process
 
 if __name__ == "__main__" and __package__ is None:
-    # `python windows/shell.py` runs the assertions at the bottom; without this the
-    # module can't find config.py because sys.path[0] is the windows dir.
+    # Direct run: add the project root to sys.path so config.py is importable.
     import sys
     from pathlib import Path
 
@@ -28,8 +27,7 @@ CRITICAL = {"csrss", "winlogon", "wininit", "services", "lsass", "smss", "system
 def run(cmd, timeout=TIMEOUT):
     """Run a command and return its text output, or '' if it fails."""
     try:
-        # Some Windows utilities emit bytes outside the active ANSI code page. Replacing
-        # only undecodable bytes keeps the useful output instead of crashing the reader.
+        # errors=replace keeps output with bytes outside the ANSI code page instead of crashing.
         done = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
                               timeout=timeout, creationflags=NO_WINDOW)
         return (done.stdout or done.stderr).strip()

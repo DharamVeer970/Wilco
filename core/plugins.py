@@ -26,9 +26,7 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent / "plugins"
 PROFILES_FILE = Path.home() / ".wilco" / "profiles.json"
 
 # --- plugins -------------------------------------------------------------------------
-# A plugin file is a plain module whose public functions become tools, exactly like the
-# MODULES in mcp_tool. It should import what it needs at the top and never run side
-# effects at import time.
+# A plugin is a plain module whose public docstringed functions become tools, like mcp_tool's; no import-time side effects.
 def discover_plugins():
     """Return a list of plugin module paths (in plugins/) that are safe to load."""
     if not PLUGINS_ENABLED or not PLUGIN_DIR.is_dir():
@@ -64,8 +62,7 @@ def load_plugins():
 
 
 # --- configuration profiles ------------------------------------------------------------
-# A profile is a mapping of config-variable name -> value. Saving writes one; loading
-# applies it into os.environ (and therefore config, which reads .env + environ live).
+# A profile maps config-var name -> value; loading applies it into os.environ (config reads it live).
 _KNOWN_KEYS = (
     "WILCO_TOOL_LIMIT", "WILCO_MAX_STEPS", "WILCO_VOICE", "WILCO_SPEED",
     "WILCO_PERMISSIONS_ENABLED", "WILCO_AUDIT_ENABLED", "WILCO_RATE_LIMIT_ENABLED",

@@ -19,9 +19,7 @@ from core import context, online
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
            "Accept-Language": "en-US,en"}
-# One connection pool shared by every call in this module — DNS lookup and the TLS
-# handshake happen once per process instead of once per tool call, which shortens every
-# chained web turn (search then read, weather, news, rates).
+# One shared connection pool per process — DNS/TLS handshake once, not per tool call.
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
@@ -100,9 +98,7 @@ def _real_url(href):
     return urllib.parse.unquote(found.group(1)) if found else href
 
 
-# DuckDuckGo puts paid results in the same result__a markup as real ones, so scraping the
-# page hands back Jobrapido before it hands back anything true. An advert is not an answer,
-# and a model given nothing but adverts fills the silence with something plausible instead.
+# DDG mixes paid adverts into result__a markup — adverts are not answers, so drop them.
 _ADVERT = re.compile(r"duckduckgo\.com/y\.js|[?&]ad_(?:domain|provider|type)=|/aclick\?")
 
 

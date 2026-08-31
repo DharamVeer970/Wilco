@@ -101,6 +101,20 @@ for _pname, _pfn in _plugins.load_plugins().items():
 TOOLS = [_schema(fn, _full_description(fn)) for fn in REGISTRY.values()]
 LLM_TOOLS = [_schema(fn, _summary(fn)) for fn in REGISTRY.values()]
 
+# Tool aliases — Claude names mapped to Wilco tools without adding new schemas (90 stays 90).
+TOOL_ALIASES = {
+    "bash": "run_bash",
+    "bashoutput": "run_bash",
+    "glob": "find_files",
+    "grep": "search_file_contents",
+    "read": "read_file",
+    "webfetch": "read_web_page",
+    "websearch": "web_search",
+    "todowrite": "self_check",
+    "skill": "list_my_tools",
+    "slashcommand": "list_my_tools",
+}
+
 # Models occasionally use the most natural argument spelling instead of the schema spelling
 # (for example `path` for open_file).
 _ARGUMENT_ALIASES = {
@@ -112,6 +126,8 @@ _ARGUMENT_ALIASES = {
     "directory": ("folder_name",),
     "folder": ("folder_name",),
     "content": ("text",),
+    "pattern": ("text", "query", "name", "path"),
+    "query": ("text", "name", "pattern"),
 }
 
 
@@ -142,8 +158,14 @@ def _token_set(text):
     return {w for w in _WORD.findall(text.lower()) if w not in _STOPISH}
 
 
-_TOOL_WORDS = {t["function"]["name"]: _token_set(
-    t["function"]["name"] + " " + t["function"]["description"]) for t in LLM_TOOLS}
+_TOOL_WORDS = {}
+for t in LLM_TOOLS:
+    name = t["function"]["name"]
+    words = _token_set(name + " " + t["function"]["description"])
+    for alias, target in TOOL_ALIASES.items():
+        if target == name:
+            words.add(alias)
+    _TOOL_WORDS[name] = words
 
 # Always on the wire — must never be missing, whatever the query looks like.
 CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run_python",
@@ -154,23 +176,43 @@ CORE_TOOLS = ("confirm_yes", "cancel_action", "run_powershell", "run_bash", "run
               "check_requirements", "install_requirements", "run_tests")
 
 
+from collections import OrderedDict as _OrderedDict
+_DISPATCH_CACHE: _OrderedDict[tuple[str, int], list] = _OrderedDict()
+_DISPATCH_CACHE_MAX = 256
+
+
 def dispatch_tools(query, limit):
     """The compact schemas for one turn: the `limit` most relevant tools plus CORE_TOOLS.
 
     `limit` <= 0 (or big enough to cover everything) sends every compact schema, i.e. no
     routing. The ranking is word-overlap between the query and each tool's own words, which
     keeps the model's pick to a small, focused list — a fraction of the old payload.
+
+    Optimized: LRU cache on (query,limit) avoids re-ranking 90 tools twice per turn.
     """
     if limit <= 0 or len(LLM_TOOLS) <= limit + len(CORE_TOOLS):
         return LLM_TOOLS
+    key = (query, limit)
+    cached = _DISPATCH_CACHE.get(key)
+    if cached is not None:
+        _DISPATCH_CACHE.move_to_end(key)
+        return cached
     tokens = _token_set(query)
     chosen = []
     if tokens:
         ranked = [(len(tokens & _TOOL_WORDS[name]), name) for name in _TOOL_WORDS]
-        chosen = [name for _, name in sorted(ranked, reverse=True)[:limit]]
+        # Sort by score desc, then by name for stability; top `limit` most relevant
+        ranked_sorted = sorted(ranked, key=lambda x: (x[0], x[1]), reverse=True)
+        chosen = [name for _, name in ranked_sorted[:limit]]
+    # CORE_TOOLS always appended but after ranked, preserves priority of ranked
     chosen.extend(name for name in CORE_TOOLS if name not in chosen)
-    want = set(chosen)
-    return [t for t in LLM_TOOLS if t["function"]["name"] in want]
+    # Build result in ranked order (most relevant first) for model to see priority
+    name_to_schema = {t["function"]["name"]: t for t in LLM_TOOLS}
+    result = [name_to_schema[name] for name in chosen if name in name_to_schema]
+    if len(_DISPATCH_CACHE) >= _DISPATCH_CACHE_MAX:
+        _DISPATCH_CACHE.popitem(last=False)
+    _DISPATCH_CACHE[key] = result
+    return result
 
 
 def call(name, arguments):
@@ -180,9 +222,17 @@ def call(name, arguments):
     as a string, because the model can read that and try something else — whereas an
     exception here would kill the turn and leave the user with silence.
     """
+    if isinstance(name, str):
+        alias = TOOL_ALIASES.get(name.lower())
+        if alias and alias in REGISTRY:
+            name = alias
     fn = REGISTRY.get(name)
     if fn is None:
-        return f"No tool called {name}. Available: {', '.join(REGISTRY)}"
+        hint = ""
+        low = name.lower() if isinstance(name, str) else ""
+        if low in TOOL_ALIASES:
+            hint = f" (try {TOOL_ALIASES[low]} instead)"
+        return f"No tool called {name}{hint}. Available: {', '.join(sorted(REGISTRY))}"
     arguments, recovered = _normalise_arguments(fn, arguments)
     if not isinstance(arguments, dict):
         return f"Wrong arguments for {name}: arguments must be an object."

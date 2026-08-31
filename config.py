@@ -57,10 +57,7 @@ platform = _text("WILCO_PLATFORM", "cohere")
 # The platform determines which API key and base URL to use automatically
 chat_model = _text("WILCO_CHAT_MODEL", "command-a-03-2025")
 
-# Chat and speech recognition are separate services.  STT defaults live here, while .env can
-# override every field for any OpenAI-compatible provider without changing application code.
-# transport: openai = multipart /audio/transcriptions; openrouter = JSON/base64 equivalent;
-# huggingface = its Inference API protocol.
+# STT defaults per provider (.env overrides any field); transport: openai = multipart, openrouter = JSON/base64, huggingface = its API.
 STT_PROVIDER_DEFAULTS = {
     "nvidia": {
         "key_env": "NVIDIA_API_KEY", "base_url": "https://integrate.api.nvidia.com/v1",
@@ -99,11 +96,7 @@ if platform not in PLATFORMS:
 base_url, key_var = PLATFORMS[platform]
 apikey = os.environ[key_var] if key_var else "ollama"
 
-# Chat rate limits are real: free tiers 429 after a couple of quick turns, and waiting out the
-# provider's retry-after stalls the conversation for half a minute. Instead, when the primary
-# chat provider fails or rate-limits, Wilco retries the same request on these platforms in order.
-# Each fallback uses its own platform key from PLATFORMS and its own default model; entries
-# without a key configured are skipped.
+# On provider failure/429, retry the request on these platforms in order (own key/model each; keyless entries skipped).
 CHAT_MODEL_DEFAULTS = {
     "openai": "gpt-4o",
     "cohere": "command-a-03-2025",
@@ -142,9 +135,7 @@ if not stt_model or (stt_transport != "huggingface" and not stt_base_url):
     raise SystemExit("Set WILCO_STT_MODEL and WILCO_STT_BASE_URL for a custom STT provider.")
 stt_api_key = _text("WILCO_STT_API_KEY", "") or os.environ.get(stt_key_env, "")
 
-# When the primary speech provider fails (bad URL, 404, rate limit, quota), Wilco walks down
-# this comma-separated list of fallback providers in order before giving up. Each fallback
-# uses its own STT_PROVIDER_DEFAULTS entry: its own key, base URL, transport, and model.
+# On primary STT failure, walk this comma-separated fallback list (each uses its own STT_PROVIDER_DEFAULTS entry).
 STT_FALLBACKS = [name.strip().lower() for name in
                  _text("WILCO_STT_FALLBACKS", "openrouter,huggingface").split(",") if name.strip()]
 
@@ -181,9 +172,10 @@ EMPTY_TRIES = _number("WILCO_EMPTY_TRIES", 3, int)
 LLM_TIMEOUT = _number("WILCO_LLM_TIMEOUT", 30)
 # how many compact tool schemas the model sees each turn (0 = all of them, no routing)
 TOOL_LIMIT = _number("WILCO_TOOL_LIMIT", 24, int)
+# Prompt caching: stable system prefix cacheable (Anthropic explicit, others implicit); WILCO_PROMPT_CACHE=0 disables.
+PROMPT_CACHE = _flag("WILCO_PROMPT_CACHE", True)
 
-# Auto-learn: remembers last turns locally and learns corrections/preferences to improve next replies.
-# Stored in ~/.wilco/memory.json, never sent externally. Set WILCO_MEMORY_ENABLED=0 to disable.
+# Auto-learn: remembers recent turns locally (~/.wilco/memory.json, never sent out); WILCO_MEMORY_ENABLED=0 disables.
 MEMORY_ENABLED = _flag("WILCO_MEMORY_ENABLED", True)
 MEMORY_TURNS = max(0, _number("WILCO_MEMORY_TURNS", 6, int))
 
@@ -211,8 +203,7 @@ LIST_LIMIT = _number("WILCO_LIST_LIMIT", 40, int)
 MAX_CONTROLS = _number("WILCO_MAX_CONTROLS", 300, int)
 ASK_WHAT_NEXT = _flag("WILCO_ASK_WHAT_NEXT", False)
 
-# All-access mode: every command executes immediately, no "are you sure?"
-# Set WILCO_ALWAYS_ACT=0 in .env to restore the confirmation gate.
+# All-access mode: every command executes immediately, no "are you sure?"; WILCO_ALWAYS_ACT=0 restores the gate.
 ALWAYS_ACT = _flag("WILCO_ALWAYS_ACT", True)
 
 # ---------------------------------------- running things ----------------------------------------

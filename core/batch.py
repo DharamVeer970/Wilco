@@ -26,11 +26,14 @@ def run_parallel(calls, workers=None):
         list of (label, result_text) in the same order as `calls`. Each callable should
         never raise (wrap it if it can't promise that) — this helper returns error strings
         for any that do, mirroring mcp_tool.call()'s contract.
+
+    Optimization: fixed fallback bug where sequential path reassigned results each
+    iteration (wrong length); now correctly fills in order.
     """
     if not calls:
         return []
     n = workers or min(len(calls), 4)
-    results = [None] * len(calls)
+    results: list = [None] * len(calls)
     try:
         with ThreadPoolExecutor(max_workers=n) as pool:
             future_map = {pool.submit(_run_safely, fn): i
@@ -39,9 +42,9 @@ def run_parallel(calls, workers=None):
                 idx = future_map[future]
                 results[idx] = (future.result(),)
     except (ImportError, OSError):  # no thread support / pool unavailable
-        for _label, fn in calls:
-            results = [(fn(),) for _label, fn in calls]
-    return [(_label, r[0]) if len(r) == 1 else (_label, "(no result)")
+        for idx, (_label, fn) in enumerate(calls):
+            results[idx] = (_run_safely(fn),)
+    return [(_label, r[0]) if isinstance(r, tuple) and len(r) == 1 else (_label, "(no result)")
             for (_label, _fn), r in zip(calls, results)]
 
 

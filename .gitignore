@@ -10,3 +10,4 @@ macros.json
 tests/
 *.egg-info/
 .ruff_cache/
+.opencode/

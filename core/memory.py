@@ -3,8 +3,12 @@
 This module provides long-term memory across sessions, so Wilco remembers user preferences,
 conversation context, and successful tool chains. Nothing here is critical for operation -
 if the memory file is deleted, Wilco starts fresh but still works.
+
+Optimization: in-memory snapshot with mtime check avoids re-reading JSON file on every
+preference lookup inside the Agentic Loop.
 """
 import json
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,17 +21,32 @@ PREFERENCE_DEFAULTS = {
     "pause": 2.5,
 }
 
+_lock = threading.RLock()
+_mem_data: dict | None = None
+_mem_mtime: float = 0.0
+
 
 def _load():
     """Load memory from disk, or return a fresh structure if missing/corrupt."""
-    try:
-        data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-        # Validate structure
-        if not isinstance(data, dict):
-            return _fresh()
-        return data
-    except (json.JSONDecodeError, OSError):
-        return _fresh()
+    global _mem_data, _mem_mtime
+    with _lock:
+        try:
+            mtime = MEMORY_FILE.stat().st_mtime if MEMORY_FILE.exists() else 0.0
+        except OSError:
+            mtime = 0.0
+        if _mem_data is not None and mtime == _mem_mtime:
+            return _mem_data
+        try:
+            data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = _fresh()
+        except (json.JSONDecodeError, OSError):
+            data = _fresh()
+        for k, v in _fresh().items():
+            data.setdefault(k, v)
+        _mem_data = data
+        _mem_mtime = mtime
+        return _mem_data
 
 
 def _fresh():
@@ -42,11 +61,18 @@ def _fresh():
 
 def _save(data):
     """Persist memory to disk, creating the directory if needed."""
-    try:
-        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_FILE.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-    except OSError:
-        pass  # Don't crash the assistant over a write failure
+    global _mem_data, _mem_mtime
+    with _lock:
+        try:
+            MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            MEMORY_FILE.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+            try:
+                _mem_mtime = MEMORY_FILE.stat().st_mtime
+            except OSError:
+                _mem_mtime = 0.0
+            _mem_data = data
+        except OSError:
+            pass  # Don't crash the assistant over a write failure
 
 
 def get_preference(key, default=None):
