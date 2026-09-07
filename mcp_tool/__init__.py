@@ -10,6 +10,7 @@ turn. Tools never speak — core/agent.py does that once, at the end.
 """
 import inspect
 import re
+import time as _time
 from typing import Union
 
 from mcp_tool import gate, governance, message, pc, reminders, selftest, shell_tool, ui, voice, web, workflow, workspace
@@ -236,7 +237,6 @@ def call(name, arguments):
     arguments, recovered = _normalise_arguments(fn, arguments)
     if not isinstance(arguments, dict):
         return f"Wrong arguments for {name}: arguments must be an object."
-    import time as _time
     _start = _time.time()
 
     # Permission gate: block the tool outright if it's not allowed (off by default).

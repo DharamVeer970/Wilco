@@ -101,7 +101,7 @@ CHAT_MODEL_DEFAULTS = {
     "openai": "gpt-4o",
     "cohere": "command-a-03-2025",
     "groq": "openai/gpt-oss-120b",
-    "openrouter": "meta-llama/llama-3.3-70b-instruct",
+    "openrouter": _text("WILCO_OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free"),
     "nvidia": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
     "huggingface": "meta-llama/Llama-3.3-70B-Instruct",
 }
@@ -212,6 +212,17 @@ MAX_OUTPUT = _number("WILCO_MAX_OUTPUT", 3000, int)
 TEXT_LIMIT = _number("WILCO_TEXT_LIMIT", 6000, int)
 BROWSER_WAIT = _number("WILCO_BROWSER_WAIT", 12.0)
 BROWSER_GRACE = _number("WILCO_BROWSER_GRACE", 2.5)
+
+# ---------------------------------------- external MCP servers ----------------------------------------
+# MCP servers provide additional tools. Each entry needs a name and serverUrl.
+# Format: WILCO_MCP_SERVERS=name1,name2 (comma-separated)
+# URLs are defined in MCP_SERVER_URLS below.
+MCP_SERVER_URLS = {
+    "docs-langchain": "https://docs.langchain.com/mcp",
+    "reference-langchain": "https://reference.langchain.com/mcp",
+}
+mcp_server_names = [_s.strip() for _s in _text("WILCO_MCP_SERVERS", "").split(",") if _s.strip()]
+MCP_SERVERS = [(name, MCP_SERVER_URLS[name]) for name in mcp_server_names if name in MCP_SERVER_URLS]
 
 # ---------------------------------------- files and mail ----------------------------------------
 SMTP = _text("WILCO_SMTP", "smtp.gmail.com:465")

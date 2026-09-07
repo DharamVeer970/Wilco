@@ -30,7 +30,11 @@ class _ChainCompletions:
     def __init__(self, chain):
         self._chain = []
         for index, entry in enumerate(chain):
-            client = (_PRIMARY_CLIENT if index == 0 else
+            # _PRIMARY_CLIENT is the primary platform's client — only correct for an
+            # entry that actually matches it (a keyless primary is skipped, so the
+            # first chain entry may be a fallback with its own base_url and key).
+            primary_match = (entry["base_url"] == base_url and entry["api_key"] == apikey)
+            client = (_PRIMARY_CLIENT if index == 0 and primary_match else
                       OpenAI(api_key=entry["api_key"], base_url=entry["base_url"],
                              timeout=LLM_TIMEOUT, max_retries=0))
             self._chain.append((entry, client))

@@ -7,7 +7,9 @@ __pycache__/
 Openai/
 macros.json
 .vscode/
-tests/
 *.egg-info/
 .ruff_cache/
 .opencode/
+# Test artifacts
+tests
+_pytest_cache/

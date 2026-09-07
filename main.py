@@ -32,6 +32,8 @@ if __name__ == "__main__":
     print("Welcome to Wilco AI")
     speak("Welcome to Wilco AI")
 
+    # MCP servers are loaded via plugins/plugin_mcp.py when WILCO_PLUGINS_ENABLED=1
+
     while True:
         query = take_command()
         if not query:

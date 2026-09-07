@@ -2,6 +2,7 @@ import ctypes
 import os
 import re
 import subprocess
+import threading
 import time
 import uuid
 from ctypes import wintypes
@@ -197,7 +198,10 @@ def _target_for_tab(named):
 
 
 def close_tab(target=""):
-    """Ctrl+W on the right window. Returns the title it acted on, or None.
+    """Ctrl+W on the right window, then verify. Returns the window's title only when a
+    tab actually closed — the title swapped to the next tab, or the window went away
+    with its last tab. None means nothing visibly changed, and the caller must not
+    claim success.
 
     Never taps blind: Ctrl+W in the wrong app closes that app's document, and in our own
     console it does nothing useful, so with no plausible target we do nothing and say so.
@@ -205,17 +209,51 @@ def close_tab(target=""):
     title = _target_for_tab(target)
     if not title:
         return None
+    hwnd = win32gui.GetForegroundWindow()
+    if not hwnd or hwnd == own_console():
+        return None
+    try:
+        before = win32gui.GetWindowText(hwnd)
+    except Exception:
+        return None
     _combo(VK_CTRL, VK_W)
-    return title
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        try:
+            if not win32gui.IsWindow(hwnd):
+                return title  # last tab closed — the whole window went with it
+            after = win32gui.GetWindowText(hwnd)
+            if after != before:
+                return after or title  # the next tab took over the title
+        except Exception:
+            return title  # the handle died mid-check, which means it closed
+        time.sleep(0.1)
+    return None  # title unchanged, window still there — the close did not happen
 
 
 def close_window(target=""):
-    """Alt+F4 on a window. Returns the title it acted on, or None."""
-    title = focus_window(target, wait=1.0) if target else foreground_window()[1]
-    if not title:
-        return None
+    """Alt+F4 on a window, then verify. Returns the title only when the window really
+    disappeared within a couple of seconds; None when there was nothing to close, the
+    focus never landed, or the window is still up (typically asking to save)."""
+    if target:
+        title = focus_window(target, wait=1.0)
+        if not title:
+            return None
+    else:
+        hwnd, title = foreground_window()
+        if not hwnd or not title:
+            return None
+    hwnd = win32gui.GetForegroundWindow()
     _combo(VK_ALT, VK_F4)
-    return title
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            if not win32gui.IsWindow(hwnd):
+                return title
+        except Exception:
+            return title  # invalid handle now — it closed
+        time.sleep(0.1)
+    return None  # still there — say so instead of claiming success
 
 
 def volume_step(direction, times=5):
@@ -226,24 +264,156 @@ def mute():
     _tap(VK["mute"])
 
 
+# ------------------------------------ audio via Core Audio ------------------------------------
+# Well-known GUIDs from the Windows SDK (mmdeviceapi.h / endpointvolume.h).
+_CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C459C1537871}"          #noqa
+_IID_IAudioEndpointVolume = "{5CDF2C82-841E-4546-9722-0CF0F3732911}"          #noqa
+_ERENDER, _ECONSOLE = 0, 1
+
+_audio_local = threading.local()
+_audio_error = ""
+
+
+def _class_factory_create(iface):
+    """Activate a COM class straight from its DLL when the registry has no entry.
+
+    Some slimmed-down Windows installs lack the COM registration for the audio
+    enumerator even though MMDevAPI.dll ships with Windows. DllGetClassObject
+    hands us the class factory without touching the registry. None on any failure.
+    """
+    import ctypes
+    from comtypes import GUID
+    from ctypes import POINTER, byref, c_void_p
+
+    try:
+        dll = ctypes.WinDLL(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                         "System32", "MMDevAPI.dll"))
+    except OSError:
+        return None
+    get_class_object = dll.DllGetClassObject
+    get_class_object.argtypes = [c_void_p, c_void_p, POINTER(c_void_p)]
+    get_class_object.restype = ctypes.HRESULT
+    factory = c_void_p()
+    hr = get_class_object(byref(GUID(_CLSID_MMDeviceEnumerator)),
+                          byref(GUID("{00000001-0000-0000-C000-000000000046}")),  # IID_IClassFactory
+                          byref(factory))
+    if hr != 0 or not factory.value:
+        return None
+    slot = ctypes.sizeof(c_void_p)
+    try:
+        create = ctypes.WINFUNCTYPE(ctypes.HRESULT, c_void_p, c_void_p, POINTER(c_void_p))(
+            factory.value + 3 * slot)                       # IClassFactory::CreateInstance
+        out = c_void_p()
+        if create(None, byref(iface._iid_), byref(out)) != 0 or not out.value:
+            return None
+        return iface(out.value)     # adopt the reference; comtypes releases it on GC
+    finally:
+        release = ctypes.WINFUNCTYPE(ctypes.c_uint, c_void_p)(factory.value + 2 * slot)  # Release
+        release(factory)
+
+
+def _audio_endpoint():
+    """IAudioEndpointVolume of the default output device, cached per thread.
+
+    win32com's Dispatch can't create the enumerator (it exposes no IDispatch), so this
+    goes through comtypes with the real vtable. The endpoint is cached per thread
+    because COM apartment rules require it — an STA pointer must stay on its own thread.
+    Returns None on any failure so callers keep their silent fallbacks.
+    """
+    ep = getattr(_audio_local, "ep", None)
+    if ep is not None:
+        return ep
+    try:
+        import comtypes
+        from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
+        from ctypes import c_float, c_int, c_uint, c_void_p, POINTER
+
+        class IAudioEndpointVolume(IUnknown):
+            _iid_ = GUID(_IID_IAudioEndpointVolume)
+            # vtable order matters — every method up to GetMute must be declared
+            _methods_ = [
+                COMMETHOD([], HRESULT, "RegisterControlChangeNotify",
+                          (["in"], POINTER(c_void_p), "pNotify")),
+                COMMETHOD([], HRESULT, "UnregisterControlChangeNotify",
+                          (["in"], POINTER(c_void_p), "pNotify")),
+                COMMETHOD([], HRESULT, "GetChannelCount",
+                          (["out"], POINTER(c_uint), "pnChannelCount")),
+                COMMETHOD([], HRESULT, "SetMasterVolumeLevel",
+                          (["in"], c_float, "fLevelDB")),
+                COMMETHOD([], HRESULT, "SetMasterVolumeLevelScalar",
+                          (["in"], c_float, "fLevel"),
+                          (["in"], POINTER(GUID), "pguidEventContext")),
+                COMMETHOD([], HRESULT, "GetMasterVolumeLevel",
+                          (["out"], POINTER(c_float), "pfLevelDB")),
+                COMMETHOD([], HRESULT, "GetMasterVolumeLevelScalar",
+                          (["out"], POINTER(c_float), "pfLevel")),
+                COMMETHOD([], HRESULT, "SetChannelVolumeLevel",
+                          (["in"], c_uint, "nChannel"), (["in"], c_float, "fLevelDB")),
+                COMMETHOD([], HRESULT, "SetChannelVolumeLevelScalar",
+                          (["in"], c_uint, "nChannel"), (["in"], c_float, "fLevel")),
+                COMMETHOD([], HRESULT, "GetChannelVolumeLevel",
+                          (["in"], c_uint, "nChannel"), (["out"], POINTER(c_float), "pfLevelDB")),
+                COMMETHOD([], HRESULT, "GetChannelVolumeLevelScalar",
+                          (["in"], c_uint, "nChannel"), (["out"], POINTER(c_float), "pfLevel")),
+                COMMETHOD([], HRESULT, "SetMute",
+                          (["in"], c_int, "bMute"),
+                          (["in"], POINTER(GUID), "pguidEventContext")),
+                COMMETHOD([], HRESULT, "GetMute",
+                          (["out"], POINTER(c_int), "pbMute")),
+            ]
+
+        class IMMDevice(IUnknown):
+            _iid_ = GUID("{D666063F-1587-4E43-81F1-B948E807363F}")          #noqa
+            _methods_ = [
+                COMMETHOD([], HRESULT, "Activate",
+                          (["in"], POINTER(GUID), "iid"),
+                          (["in"], c_uint, "dwClsCtx"),
+                          (["in"], POINTER(c_void_p), "pActivationParams"),
+                          (["out"], POINTER(POINTER(IAudioEndpointVolume)), "ppInterface")),
+            ]
+
+        class IMMDeviceEnumerator(IUnknown):
+            _iid_ = GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")          #noqa
+            _methods_ = [
+                COMMETHOD([], HRESULT, "EnumAudioEndpoints",
+                          (["in"], c_int, "dataFlow"), (["in"], c_uint, "dwStateMask"),
+                          (["out"], POINTER(c_void_p), "ppDevices")),
+                COMMETHOD([], HRESULT, "GetDefaultAudioEndpoint",
+                          (["in"], c_int, "dataFlow"), (["in"], c_int, "role"),
+                          (["out"], POINTER(POINTER(IMMDevice)), "ppEndpoint")),
+            ]
+
+        comtypes.CoInitialize()
+        try:
+            enum = comtypes.CoCreateInstance(GUID(_CLSID_MMDeviceEnumerator),
+                                             interface=IMMDeviceEnumerator,
+                                             clsctx=comtypes.CLSCTX_ALL)
+        except OSError:
+            enum = _class_factory_create(IMMDeviceEnumerator)
+        if enum is None:
+            return None
+        dev = enum.GetDefaultAudioEndpoint(_ERENDER, _ECONSOLE)
+        ep = dev.Activate(GUID(_IID_IAudioEndpointVolume), 0x1E, None)      # CLSCTX_ALL
+        _audio_local.ep = ep
+        return ep
+    except Exception as error:
+        global _audio_error
+        _audio_error = f"{type(error).__name__}: {error}"
+        return None
+
+
 def get_mute():
     """True if the default output device is muted, False if not, None if unreadable.
 
-    Read-only — never changes anything. Uses the CoreAudio MMDevice API via
-    win32com with the real, Microsoft-published interface GUIDs (the same
-    constants the Windows SDK documents — not invented). Returns None on any
-    COM failure, so it can never break the agent loop.
+    Read-only — never changes anything. Uses the CoreAudio MMDevice API through
+    the real, Microsoft-published interface GUIDs (the same constants the
+    Windows SDK documents — not invented). Returns None on any COM failure, so
+    it can never break the agent loop.
     """
-    # Well-known GUIDs from the Windows SDK (mmdeviceapi.h).
-    CLSID_MMDeviceEnumerator = "{BCDE0395-E52F-467C-8E3D-C459C1537871}"
-    IID_IAudioEndpointVolume = "{5CDF2C82-841E-4546-9722-0CF0F3732911}"
-    eRender, eConsole = 0, 1
     try:
-        import win32com.client
-        dev_enum = win32com.client.Dispatch(CLSID_MMDeviceEnumerator)
-        dev = dev_enum.GetDefaultAudioEndpoint(eRender, eConsole)
-        endpoint = dev.Activate(IID_IAudioEndpointVolume, eConsole, None)
-        # GetMute() returns a VARIANT bool of the mute state.
+        endpoint = _audio_endpoint()
+        if endpoint is None:
+            return None
         return bool(endpoint.GetMute())
     except Exception:
         return None
@@ -254,20 +424,38 @@ def media(action):
     _tap(VK[action])
 
 
+# tasklist is a ~200ms shell-out and the answer barely changes second to second,
+# so a short TTL keeps repeat media queries instant.
+_MEDIA_TTL = 10.0
+_media_cache = {"at": 0.0, "apps": []}
+
+
 def media_app_running():
     """Names of running apps that respond to media keys, if any."""
+    now = time.monotonic()
+    if now - _media_cache["at"] < _MEDIA_TTL:
+        return _media_cache["apps"]
     out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True,
                          creationflags=NO_WINDOW).stdout
     known = {"spotify.exe": "Spotify", "vlc.exe": "VLC", "chrome.exe": "Chrome",
              "msedge.exe": "Edge", "brave.exe": "Brave", "wmplayer.exe": "Media Player",
              "music.ui.exe": "Media Player", "firefox.exe": "Firefox"}
-    running = {v for k, v in known.items() if f'"{k}"' in out.lower()}
-    return sorted(running)
+    running = sorted({v for k, v in known.items() if f'"{k}"' in out.lower()})
+    _media_cache.update(at=now, apps=running)
+    return running
 
 
 def set_volume(percent):
-    """Each key press moves 2%, so drop to zero then step up."""
+    """Set master volume directly through Core Audio; falls back to key taps
+    (each key press moves 2%, so drop to zero then step up) if COM is unavailable."""
     percent = max(0, min(100, int(percent)))
+    try:
+        endpoint = _audio_endpoint()
+        if endpoint is not None:
+            endpoint.SetMasterVolumeLevelScalar(percent / 100.0, None)
+            return percent
+    except Exception:
+        pass
     _tap(VK["down"], 50)
     _tap(VK["up"], round(percent / 2))
     return percent
@@ -275,10 +463,16 @@ def set_volume(percent):
 def get_volume():
     """Current master output volume as 0-100, or None if it can't be read.
 
-    Read-only — never changes anything. Reads the default wave-output device
-    (WAVE_MAPPER) and averages its two channels. Uses the native WinMM API, so
-    there is no guessed WMI/COM class or CLSID involved.
+    Read-only — never changes anything. Prefers the CoreAudio master scalar
+    (what set_volume writes, so reads and writes agree), and falls back to the
+    native WinMM wave-out average of its two channels.
     """
+    try:
+        endpoint = _audio_endpoint()
+        if endpoint is not None:
+            return round(float(endpoint.GetMasterVolumeLevelScalar()) * 100)
+    except Exception:
+        pass
     WAVE_MAPPER = 0xFFFFFFFF  # -1 selects the default output device
     try:
         current = wintypes.DWORD()
@@ -292,7 +486,30 @@ def get_volume():
     right = ((both >> 16) & 0xFFFF) / 655.35
     return round((left + right) / 2)
 
+_wmi_local = threading.local()
+
+
+def _wmi_namespace():
+    """SWbemServices for root/WMI, cached per thread (COM pointers are apartment-bound)."""
+    ns = getattr(_wmi_local, "ns", None)
+    if ns is None:
+        import pythoncom
+        pythoncom.CoInitialize()
+        ns = win32com.client.GetObject("winmgmts://./root/WMI")
+        _wmi_local.ns = ns
+    return ns
+
+
 def get_brightness():
+    """Current panel brightness, read in-process over WMI (fast), with the old
+    PowerShell route kept as a fallback for builds where the COM moniker fails."""
+    try:
+        values = [int(m.CurrentBrightness)
+                  for m in _wmi_namespace().InstancesOf("WmiMonitorBrightness")]
+        if values:
+            return max(0, min(100, values[0]))
+    except Exception:
+        _wmi_local.ns = None  # dead pointer — rebuild next time
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness"
@@ -302,8 +519,18 @@ def get_brightness():
 
 
 def set_brightness(percent):
-    # Get-CimInstance objects carry no methods, so this has to be Get-WmiObject
+    """Set panel brightness in-process over WMI (fast); PowerShell fallback.
+    Get-CimInstance objects carry no methods, so the fallback has to be Get-WmiObject."""
     percent = max(0, min(100, int(percent)))
+    try:
+        done = False
+        for m in _wmi_namespace().InstancesOf("WmiMonitorBrightnessMethods"):
+            m.WmiSetBrightness(1, percent)
+            done = True
+        if done:
+            return percent
+    except Exception:
+        _wmi_local.ns = None  # dead pointer — rebuild next time
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          "(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods"

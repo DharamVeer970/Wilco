@@ -68,12 +68,16 @@ def close_app(name=""):
     target = name or system.foreground_window()[1]
     if not target:
         return "Nothing is in front, so there's nothing to close. Ask which app they mean."
-    image = shell.close_app(target)
+    image, exited = shell.close_app(target)
     if not image:
         return f"{target} doesn't appear to be running."
     if context.app and target.lower() in context.app.lower():
         context.app = None
-    return f"Closed {target} ({image}) and all of its windows."
+    if exited:
+        return f"Closed {target} ({image}) and all of its windows."
+    return (f"Asked {target} ({image}) to close, but it's still running — "
+            f"it may be showing a save prompt. Ask the user to save or discard, "
+            f"then try again.")
 
 
 def close_tab(app=""):

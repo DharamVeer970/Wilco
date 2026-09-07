@@ -526,6 +526,23 @@ def _agent_loop(checkpoint, user_text, acted, turn_tools, clean_ephemeral):
     return True, acted
 
 
+def _register_remote_tools():
+    """Register tools from external MCP servers into Wilco's registry.
+
+    Called at the start of each turn. No-op if no MCP servers are configured
+    or if tools are already registered.
+    """
+    try:
+        from mcp_client import get_remote_tools, register_with_registry
+        remote = get_remote_tools()
+        if remote:
+            register_with_registry()
+    except ImportError:
+        pass
+    except Exception as e:
+        log.warning(f"MCP: failed to register remote tools: {e}")
+
+
 def respond(text, already_done=()):
     """Handle one spoken turn: call tools until the model is done, then say the reply.
 
@@ -537,6 +554,7 @@ def respond(text, already_done=()):
     already_done names parts of the sentence the instant path has carried out, so a compound
     command handed over halfway does not get its first half run a second time.
     """
+    _register_remote_tools()
     _refresh_prompt()
     user_text = text
     if is_correction(text):

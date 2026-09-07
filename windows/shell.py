@@ -4,6 +4,7 @@ import re
 import shutil
 import string
 import subprocess
+import time
 from ctypes import wintypes
 
 from rapidfuzz import fuzz, process
@@ -20,16 +21,19 @@ from config import SHELL_TIMEOUT as TIMEOUT
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW
 
-# never close these — Windows dies with them
-CRITICAL = {"csrss", "winlogon", "wininit", "services", "lsass", "smss", "system", "explorer"}
+# never close these — Windows dies with them, and python is Wilco itself
+CRITICAL = {"csrss", "winlogon", "wininit", "services", "lsass", "smss", "system",
+            "explorer", "python", "pythonw"}
 
 
-def run(cmd, timeout=TIMEOUT):
-    """Run a command and return its text output, or '' if it fails."""
+def run(cmd, timeout=TIMEOUT, cwd=None):
+    """Run a command and return its text output, or '' if it fails.
+    cwd: working directory to run in — None inherits the current process directory."""
     try:
         # errors=replace keeps output with bytes outside the ANSI code page instead of crashing.
         done = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                              timeout=timeout, creationflags=NO_WINDOW)
+                              timeout=timeout, creationflags=NO_WINDOW,
+                              cwd=cwd)
         return (done.stdout or done.stderr).strip()
     except (subprocess.SubprocessError, OSError):
         return ""
@@ -105,17 +109,38 @@ def _best_image(name, stems):
     return stems[hit] if hit else None
 
 
-def close_app(name):
-    """Ask the best-matching running app to close. Returns its image name, or None."""
+def _images():
+    """{lowercase stem: exact image name} for every running process."""
     stems = {}
     for row in run(["tasklist", "/fo", "csv", "/nh"]).splitlines():
         image = row.split('","')[0].strip('"')
         if image.lower().endswith(".exe"):
             stems[image[:-4].lower()] = image
-    image = _best_image(name, stems)
-    if image:
-        run(["taskkill", "/IM", image])  # no /F, so unsaved work still gets its prompt
-    return image
+    return stems
+
+
+def _image_running(image):
+    return image.lower() in run(["tasklist", "/fo", "csv", "/nh"]).lower()
+
+
+def close_app(name):
+    """Ask the best-matching running app to close, then verify it actually left.
+
+    Returns (image, exited): image is the process that was signalled (None when
+    nothing running matches), exited says whether it really quit — a graceful
+    taskkill is often ignored while an app shows a save prompt, and the caller
+    must not claim success without this check.
+    """
+    image = _best_image(name, _images())
+    if not image:
+        return None, False
+    run(["taskkill", "/IM", image])  # no /F, so unsaved work still gets its prompt
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if not _image_running(image):
+            return image, True
+        time.sleep(0.3)
+    return image, False
 
 
 def disk_free():

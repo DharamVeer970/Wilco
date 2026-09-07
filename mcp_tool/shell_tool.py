@@ -104,7 +104,9 @@ def _powershell_needs_confirmation(command):
 
 
 def _execute(command):
-    output = shell.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", command])
+    from mcp_tool.pc.common import _working_dir
+    output = shell.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                       cwd=_working_dir())
     if not output:
         return "It ran, with no output."
     return output[:MAX_OUTPUT] + ("\n...(truncated)" if len(output) > MAX_OUTPUT else "")
@@ -220,10 +222,11 @@ def run_bash(command, folder=""):
 
 
 def _execute_python(code):
+    from mcp_tool.pc.common import _working_dir
     try:
         done = subprocess.run(
             [sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
-            cwd=PROJECT, creationflags=shell.NO_WINDOW, encoding="utf-8", errors="replace")
+            cwd=_working_dir(), creationflags=shell.NO_WINDOW, encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return "That took over a minute and was stopped. Try something smaller."
     output = ((done.stdout or "") + (done.stderr or "")).strip()

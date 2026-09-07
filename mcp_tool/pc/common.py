@@ -81,10 +81,14 @@ def _existing_file(value):
 
 
 def _working_dir():
+    """The directory file-producing tools run in by default.
+    context.folder is set when the user explicitly points Wilco at a folder
+    ('open my documents', 'go to D:/Projects', ...); otherwise it is the
+    directory the user launched Wilco from — so a fresh clone just works
+    where they are, without Wilco parking files in its own folder."""
     if context.folder:
         return context.folder
-    from mcp_tool import workspace
-    return workspace.current_project_dir() or os.getcwd()
+    return os.getcwd()
 
 
 def _infer_extension(content):
