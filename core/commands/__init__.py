@@ -1,5 +1,7 @@
 import datetime
+import logging
 import os
+import queue
 import re
 import subprocess
 import webbrowser
@@ -7,6 +9,7 @@ from urllib.parse import quote_plus
 
 from rapidfuzz import fuzz, process
 
+import events
 import windows.apps as apps
 import windows.files as files
 from core import agent, context, online
@@ -32,6 +35,13 @@ from core.commands.patterns import (
 
 # what Wilco is waiting for: None | ("source", kind) | ("pick", kind, exe) | ("online", kind) | ("app", [candidates])
 _pending = None
+log = logging.getLogger("wilco")
+
+# One worker owns handle(), whatever fed it. The microphone and a browser tab are two ways in,
+# and they must not run commands at the same time: _pending, the context and the conversation
+# are module state with no lock, so two threads would answer one request with another's
+# question. So both callers put text in this queue and one thread takes it out.
+_inbox = queue.Queue()
 
 
 def _hindi(query):
@@ -640,6 +650,9 @@ def _split_compound(query):
 def handle(query):
     """Run one command. Return False to quit, True to keep listening."""
     query = query.strip(STRIP)
+    # However the words arrived — spoken into the microphone or typed into the frontend — they
+    # are the same turn, and this is the one place that sees both.
+    events.emit("transcript", role="user", text=query)
     query = _hindi(query) or query
 
     # Anything that isn't a short, plain order goes straight to the agent. It reads the whole
@@ -851,3 +864,28 @@ def _remember_local_command(query):
     """Give a later AI follow-up the outcome of an instant, non-AI command."""
     detail = f"The active app is {context.app}." if context.app else "The local command completed."
     agent.remember_local_turn(query, detail)
+
+
+def submit(text):
+    """Queue one utterance — from the microphone, or from the frontend's command box."""
+    text = (text or "").strip()
+    if text:
+        _inbox.put(text)
+    return bool(text)
+
+
+def work():
+    """Run queued utterances in order until one asks to quit.
+
+    Returns False when the user said goodbye, so the caller can end the process. Exceptions are
+    caught here rather than at the caller because this is now the only place handle() is called
+    in the running program, and one bad utterance must never end the session.
+    """
+    while True:
+        query = _inbox.get()
+        try:
+            if not handle(query):
+                return False
+        except Exception:
+            log.exception("command failed: %r", query)
+            speak("Something went wrong with that one.")

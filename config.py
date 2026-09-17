@@ -213,6 +213,15 @@ TEXT_LIMIT = _number("WILCO_TEXT_LIMIT", 6000, int)
 BROWSER_WAIT = _number("WILCO_BROWSER_WAIT", 12.0)
 BROWSER_GRACE = _number("WILCO_BROWSER_GRACE", 2.5)
 
+# ---------------------------------------- the browser frontend ----------------------------------------
+# A second front door, not a second app: it serves the built UI and hands whatever is typed
+# there to the same worker the microphone feeds. Off means the browser tab has nothing to talk
+# to and Wilco is voice-only, exactly as before. Loopback by default — the tools this exposes
+# control the whole machine, so it is not something to bind to a network interface casually.
+UI_ENABLED = _flag("WILCO_UI_ENABLED", True)
+UI_HOST = _text("WILCO_UI_HOST", "127.0.0.1")
+UI_PORT = _number("WILCO_UI_PORT", 8799, int)
+
 # ---------------------------------------- external MCP servers ----------------------------------------
 # MCP servers provide additional tools. Each entry needs a name and serverUrl.
 # Format: WILCO_MCP_SERVERS=name1,name2 (comma-separated)

@@ -33,6 +33,7 @@ import win32com.client
 from rapidfuzz import fuzz, process
 
 import config
+import events
 
 try:
     import edge_tts
@@ -64,6 +65,15 @@ _serial = itertools.count()
 _local = threading.local()
 _speech_lock = threading.RLock()
 _last_spoken = ("", float("-inf"))
+# Up while audio is playing. speak() blocks, so the microphone normally cannot hear Wilco talk
+# because there is only one thread; the frontend added a second one for commands, and this is
+# what keeps that new thread from recording Wilco's own voice back into the mic.
+_busy = threading.Event()
+# Counts lines spoken this session. A listener that starts recording just before Wilco begins
+# talking cannot catch that with _busy — it is already recording — so it compares this before and
+# after instead, and drops a phrase that overlaps a reply rather than queueing the reply as the
+# next command, over and over.
+_spoken = 0
 
 
 def _sapi():
@@ -82,6 +92,11 @@ def _clamp(speed):
     return max(SLOWEST, min(FASTEST, int(speed)))
 
 
+def _count_line():
+    global _spoken
+    _spoken += 1
+
+
 _state = {"voice": config.VOICE if config.VOICE in VOICES else "ava",
           "speed": _clamp(config.SPEED)}
 
@@ -93,11 +108,23 @@ def current():
     return name, voice_id, description, _state["speed"]
 
 
+def is_speaking():
+    """True while a line is being played aloud."""
+    return _busy.is_set()
+
+
+def spoken_count():
+    """How many lines have been spoken — a listener compares this to spot its own echo."""
+    return _spoken
+
+
 def use(name):
     """Switch voice pack. Returns the name switched to, or None if there's no such voice."""
     chosen = _resolve(name)
     if chosen:
         _state["voice"] = chosen
+        name, voice_id, description, speed = current()
+        events.emit("voice", name=name, id=voice_id, description=description, speed=speed)
     return chosen
 
 
@@ -107,12 +134,47 @@ def set_speed(percent):
         _state["speed"] = _clamp(percent)
     except (TypeError, ValueError):
         pass
+    events.emit("speed", value=_state["speed"])
     return _state["speed"]
+
+
+CHARACTER_VOICE_ALIASES = {
+    # Female
+    "ava": "ava",
+    "aoede": "ava",
+    "luna": "ava",
+    "swara": "swara",      # Hindi female
+    "hindi female": "swara",
+    "neerja": "neerja",    # Indian English female
+    "blaze": "sonia",      # Bold female
+    "fenrir": "sonia",
+    "iris": "emma",
+    "kore": "emma",
+    "leda": "neerja",
+    "athena": "neerja",
+    "natasha": "natasha",
+    "zephyr": "natasha",
+    "aria": "natasha",
+    # Male
+    "madhur": "madhur",    # Hindi male
+    "hindi male": "madhur",
+    "prabhat": "prabhat",  # Indian English male
+    "brian": "brian",      # Deep male
+    "charon": "brian",
+    "erebus": "brian",
+    "andrew": "andrew",    # Youthful male
+    "puck": "andrew",
+    "spark": "andrew",
+    "ryan": "ryan",
+    "david": "david",
+}
 
 
 def _resolve(name):
     """Match what was said to a voice pack — by name, by accent, or near enough."""
     wanted = str(name or "").strip().lower()
+    if wanted in CHARACTER_VOICE_ALIASES:
+        return CHARACTER_VOICE_ALIASES[wanted]
     if wanted in VOICES:
         return wanted
     if not wanted:
@@ -141,6 +203,14 @@ def speak(text):
             print(f"Wilco: duplicate reply suppressed: {text}")
             return
         print(f"Wilco: {text}")
+        # Every spoken line in the program passes through here — an instant command, an agent
+        # reply, a reminder and a failure notice alike — so this is the one place the UI can be
+        # told what was said without any of those callers having to remember to tell it.
+        events.emit("transcript", role="assistant", text=text, voice=_state["voice"])
+        events.emit("speak", phase="start", voice=_state["voice"], text=text)
+        events.emit("state", value="speaking")
+        _busy.set()
+        _count_line()
         try:
             voice_id = VOICES[_state["voice"]][0]
             if edge_tts is None or voice_id.startswith(LOCAL):
@@ -148,6 +218,9 @@ def speak(text):
             else:
                 _speak_neural(text, voice_id)
         finally:
+            _busy.clear()
+            events.emit("speak", phase="end", voice=_state["voice"])
+            events.emit("state", value="idle")
             _last_spoken = (fingerprint, time.monotonic())
 
 
@@ -175,6 +248,10 @@ def _speak_neural(text, voice_id):
         if made is None:
             _speak_local(" ".join(groups[i:]))
             return
+        # A group is one spoken breath. Telling the UI where each one begins is what lets the
+        # avatar's mouth move with the sentence instead of at some unrelated rhythm.
+        events.emit("speak", phase="chunk", voice=voice_id, index=i, total=len(groups),
+                    text=group)
         _play(*made)
 
 

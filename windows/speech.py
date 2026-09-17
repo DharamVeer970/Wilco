@@ -218,10 +218,10 @@ def take_command():
             print("Listening...")
             wav_data = _listen_with_sounddevice()
     except sr.WaitTimeoutError:
-        _calibrated = False  # heard nothing at all, so the room's noise floor has moved
         return ""
     except Exception as e:
         print("Error while listening:", e)
+        time.sleep(1.0)
         return ""
 
     print("Recognizing...")

@@ -68,6 +68,33 @@ def get_corrections() -> list:
     return list(reversed(get_preference(_CORRECTION_KEY, []) or []))
 
 
+def add_correction(text: str) -> bool:
+    """Store something the user wants remembered, without second-guessing whether they meant it.
+
+    record_correction() only keeps a sentence its own regex reads as a correction, which is right
+    for speech — a request must not be mistaken for a standing instruction. Typing one into the
+    frontend is not ambiguous that way, so this stores it as given.
+    """
+    text = (text or "").strip()
+    if not text:
+        return False
+    corrections = list(get_preference(_CORRECTION_KEY, []) or [])
+    if text not in corrections:
+        corrections.append(text)
+        set_preference(_CORRECTION_KEY, corrections[-50:])
+    return True
+
+
+def remove_correction(text: str) -> bool:
+    """Forget one stored correction. False if it wasn't there."""
+    corrections = list(get_preference(_CORRECTION_KEY, []) or [])
+    if text not in corrections:
+        return False
+    corrections.remove(text)
+    set_preference(_CORRECTION_KEY, corrections)
+    return True
+
+
 def correction_prompt_snippet() -> str:
     """Render stored corrections as a short block the system prompt can carry."""
     corrections = get_corrections()

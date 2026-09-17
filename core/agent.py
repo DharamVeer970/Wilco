@@ -15,6 +15,7 @@ from pathlib import Path
 
 import mcp_tool
 import config as _config
+import events
 from config import (EMPTY_TRIES, MAX_MESSAGES, MAX_STEPS, TOOL_LIMIT, MEMORY_ENABLED,
                     MEMORY_TURNS, chat_model)
 from core import roman
@@ -321,6 +322,7 @@ def _run_parallel(calls):
         print(f"     {result[:160]}")
         success = not result.startswith(("Error calling", "Wrong arguments", "No tool called"))
         record_tool_call(label, success, time.time() - start)
+        _announce_tool(label, _parse_arguments(call), result, start)
         result = _trim_result(label, result)
         history.append({"role": "tool", "tool_call_id": call.id, "content": result})
         results.append((label, result))
@@ -344,6 +346,7 @@ def _run_one(call):
         record_tool_call(call.function.name, False, time.time() - start, str(e))
         result = f"Error calling {call.function.name}: {type(e).__name__}: {e}"
         print(f"     ERROR: {result[:160]}")
+    _announce_tool(call.function.name, arguments, result, start)
     return call.function.name, _trim_result(call.function.name, result)
 
 
@@ -543,6 +546,13 @@ def _register_remote_tools():
         log.warning(f"MCP: failed to register remote tools: {e}")
 
 
+def _announce_tool(name, arguments, result, started):
+    """Tell the UI what one tool did, in the same words the console already prints."""
+    ok = not result.startswith(("Error", "No tool called", "Wrong arguments", _NOT_DONE))
+    events.emit("tool", name=name, args=arguments, result=result[:1200],
+                ok=ok, ms=round((time.time() - started) * 1000))
+
+
 def respond(text, already_done=()):
     """Handle one spoken turn: call tools until the model is done, then say the reply.
 
@@ -564,6 +574,9 @@ def respond(text, already_done=()):
         text = (f"{text}\n\n(Already carried out, do not repeat: {'; '.join(already_done)}. "
                 f"Continue with the rest of the request.)")
     _repair()
+    # A model round trip is the one visibly slow part of a turn. Saying so is what stops the
+    # UI sitting still and looking broken while the answer is being composed.
+    events.emit("state", value="thinking")
     checkpoint = len(history)
     if extra:
         history.append({"role": "system", "content": "\n\n".join(extra)})

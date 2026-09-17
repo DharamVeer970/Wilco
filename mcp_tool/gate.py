@@ -10,6 +10,7 @@ answers it, and confirm_yes()/cancel_action() apply it.
 import contextvars
 import re
 
+import events
 from config import ALWAYS_ACT
 
 # Keyed by caller, so two clients never confirm each other's action. The voice loop is "local".
@@ -63,6 +64,9 @@ def _park(description, action):
         except Exception as e:
             return f"Tried to {description} but it failed: {type(e).__name__}: {e}"
     _pending[session.get()] = (description, action)
+    # The frontend puts this in front of the user as a decision to make rather than a sentence
+    # to answer, so one parked action is asked about once however it was triggered.
+    events.emit("confirm", pending=True, description=description)
     return (f"NOT DONE — this action is parked and is NOT running. It is already queued "
             f"under this session, so DO NOT call this tool again to 'make it run'. Ask the "
             f"user, in your own words, whether to go ahead with: {description}. Then STOP — "
@@ -80,7 +84,9 @@ def confirm_yes():
     try:
         result = action()
     except Exception as e:
+        events.emit("confirm", pending=False, approved=True, description=description)
         return f"Tried to {description} but it failed: {type(e).__name__}: {e}"
+    events.emit("confirm", pending=False, approved=True, description=description)
     return f"Done: {description}." + (f" {result}" if isinstance(result, str) and result else "")
 
 
@@ -89,4 +95,5 @@ def cancel_action():
     parked = _pending.pop(session.get(), None)
     if not parked:
         return "There was nothing waiting."
+    events.emit("confirm", pending=False, approved=False, description=parked[0])
     return f"Cancelled: {parked[0]}. Nothing was changed."

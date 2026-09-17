@@ -10,6 +10,11 @@ macros.json
 *.egg-info/
 .ruff_cache/
 .opencode/
+Frontend/node_modules/
+# Build output — regenerates with `npm run build`. Never commit (70MB+).
+Frontend/dist/
+Frontend/assets/
+scripts
 # Test artifacts
 tests
 _pytest_cache/
