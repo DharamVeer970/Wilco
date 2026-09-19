@@ -134,5 +134,30 @@ ON_SITE = re.compile(r"\s(?:on|in)\s+(\w+)$")
 SETTINGS = re.compile(r"\bsettings?\b|\boptions?\b")
 OPEN = re.compile(r"(?:open|launch|start)\s+(?:my\s+|the\s+)?(.+)")
 APP_SUFFIX = re.compile(r"\s(?:app|application|file)$")
+# Spoken voice switching: "change your voice to swara", "switch to the swara voice", "speak in
+# hindi". The name is read by voice_wanted(); whether it is a voice the user could mean is
+# windows.voice's question, so the instant path never has to guess.
+VOICE_SET = re.compile(
+    r"\b(?:change|switch|set|use|pick|make|put)\b[^.!?]{0,30}\bvoices?\b"
+    r"|\bvoices?\b[^.!?]{0,24}\b(?:to|as|in|into|like)\b"
+    r"|\b(?:speak|talk)\s+(?:in|like|as)\b", re.I)
+# "switch to swara" names no voice at all — the name is whatever follows the verb.
+SWITCH_TO = re.compile(r"^(?:switch|change|set|use)\s+to\s+(?:the\s+|a\s+)?(.+?)\s*(?:voice|please)?$",
+                       re.I)
+VOICE_CHANGE = re.compile(r"\b(?:change|switch|set|use|pick|make|put)\b", re.I)
+
+
+def voice_wanted(text):
+    """What the sentence says the voice should be, as spoken — "" when it names none.
+
+    The words around the name ("switch my voice TO the SWARA voice") are windows.voice's to strip:
+    it is the module that knows which of them are names and which are only grammar.
+    """
+    spoken = re.search(r"\bvoices?\b", text, re.I)
+    if not spoken:
+        spoken = re.search(r"\b(?:speak|talk)\b", text, re.I)
+    return text[spoken.end():].strip(STRIP) if spoken else ""
+
+
 MEDIA_SAID = {"play_pause": "Toggled playback", "next": "Skipped to the next track",
               "previous": "Went back a track", "stop": "Stopped playback"}

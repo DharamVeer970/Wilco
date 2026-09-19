@@ -16,8 +16,11 @@ export interface Settings {
   wakeWordEnabled: boolean;
   /** Phrase that activates Wilco (case-insensitive substring match). */
   wakePhrase: string;
-  /** Preferred microphone device id ("" = system default). */
+  /** Preferred microphone device id ("" = system default). Browser-side only — it is an opaque
+   *  per-origin hash that the Python microphone cannot resolve. */
   micDeviceId: string;
+  /** Human-readable name of the same device. This is what windows/speech.py matches on. */
+  micDeviceLabel: string;
   /** Wake-word sensitivity: 0 (strict) .. 100 (loose). Affects debounce window. */
   sensitivity: number;
   /** Master toggle for UI animations. */
@@ -35,6 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   wakeWordEnabled: false,
   wakePhrase: "hey wilco",
   micDeviceId: "",
+  micDeviceLabel: "",
   sensitivity: 60,
   animations: true,
   voice: "ava",
@@ -74,6 +78,16 @@ export function loadSettings(): Settings {
  */
 export function saveSettings(patch: Partial<Settings>): Settings {
   const current = loadSettings();
+  // A save that changes nothing is not a save. The stream announces the voice the backend is
+  // already using, and echoing that announcement back as a settings write would post to the
+  // backend forever — which is exactly the loop that made the browser crawl.
+  const changed = (Object.keys(patch) as (keyof Settings)[]).some(
+    (key) => patch[key] !== undefined && patch[key] !== current[key],
+  );
+  if (!changed) {
+    // Same object back, so React also skips re-rendering the whole tree for an echo.
+    return current;
+  }
   const next: Settings = { ...current, ...patch };
   if (typeof window !== "undefined") {
     try {

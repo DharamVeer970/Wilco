@@ -18,6 +18,7 @@ import time
 import winreg
 
 import config
+import events
 import windows.system as system
 
 APP_PATHS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
@@ -100,6 +101,22 @@ def _appeared(its_windows, before, mark, private):
     return newest, False
 
 
+def announce(url):
+    """Publish a page as open, so the frontend can show it in its own panel.
+
+    Opening and announcing are separate jobs. Each caller keeps its own way of actually launching
+    something — a browser window here, webbrowser.open() in mcp_tool/web.py, core/online.py and the
+    spoken command fast-paths — and this only says what is now on screen. It lives in windows/
+    because that layer sits below all of those, so every one of them can reach it without an
+    import cycle, and the event's shape is described in one place instead of six.
+
+    Returns the url unchanged, so a caller can write `webbrowser.open(announce(url))`.
+    """
+    if url:
+        events.emit("browser", url=url)
+    return url
+
+
 def open_window(name="", private=False, url=""):
     """Open a new browser window, private or not.
 
@@ -122,7 +139,7 @@ def open_window(name="", private=False, url=""):
     _, private_flag, window_flag, mark, brand = BROWSERS[chosen]
     command = [exe, private_flag if private else window_flag]
     if url:
-        command.append(url if "://" in url else f"https://{url}")
+        command.append(announce(url if "://" in url else f"https://{url}"))
 
     wanted_exe = os.path.basename(exe).lower()
 

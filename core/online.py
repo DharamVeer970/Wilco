@@ -4,6 +4,8 @@ import webbrowser
 
 import requests
 
+from windows import browser as browsers
+
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en"}
 
 # One connection pool, kept alive between searches — DNS lookup and TLS handshake
@@ -68,4 +70,5 @@ def search(query, limit=8):
 
 
 def play(video_id):
-    webbrowser.open(f"https://www.youtube.com/watch?v={video_id}&autoplay=1")
+    """Play a video in the browser, announced so the frontend can project it too."""
+    webbrowser.open(browsers.announce(f"https://www.youtube.com/watch?v={video_id}&autoplay=1"))

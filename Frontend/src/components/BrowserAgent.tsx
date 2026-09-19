@@ -31,12 +31,6 @@ interface Tab {
 interface BrowserAgentProps {
   url: string;
   onClose: () => void;
-  actionTrigger?: {
-    type: string;
-    args: Record<string, unknown>;
-    id: string;
-    callback: (res: unknown) => void;
-  } | null;
 }
 
 interface YtVideo {
@@ -130,27 +124,6 @@ function normalizeToUrl(input: string): string {
     // Not parseable as a URL — fall through to search.
   }
   return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(trimmed)}`;
-}
-
-function getMessageTargetOrigin(urlStr: string): string {
-  try {
-    return new URL(urlStr).origin;
-  } catch {
-    return window.location.origin;
-  }
-}
-
-function getYoutubeEmbedFunc(action: string, value: unknown): string {
-  if (action === "play") {
-    return "playVideo";
-  }
-  if (action === "pause") {
-    return "pauseVideo";
-  }
-  if (action === "volume" && value) {
-    return "setVolume";
-  }
-  return "";
 }
 
 function checkIsRestricted(urlStr: string): { restricted: boolean; reason: string } {
@@ -266,35 +239,6 @@ function getSearchQuery(urlStr: string): string {
   }
 }
 
-function findInput(doc: Document): HTMLElement | null {
-  return doc.querySelector(
-    'input[type="text"], input[type="search"], textarea, [contenteditable="true"]',
-  ) as HTMLElement | null;
-}
-
-function typeIntoElement(el: HTMLElement, text: string): void {
-  el.focus();
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    el.value = text;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  } else {
-    el.innerText = text;
-  }
-}
-
-function findClickable(doc: Document, selector: string): HTMLElement | null {
-  const direct = doc.querySelector(selector) as HTMLElement | null;
-  if (direct) {
-    return direct;
-  }
-  const candidates = Array.from(
-    doc.querySelectorAll('a, button, [role="button"], span, h3'),
-  ) as HTMLElement[];
-  const wanted = selector.toLowerCase();
-  return candidates.find((el) => (el.textContent ?? "").toLowerCase().includes(wanted)) ?? null;
-}
-
 const QUICK_LINKS = [
   { name: "YouTube", url: "https://youtube.com", icon: "play" },
   { name: "Wikipedia", url: "https://wikipedia.org", icon: "book" },
@@ -326,7 +270,6 @@ function QuickLinkIcon({ icon }: Readonly<{ icon: string }>): React.JSX.Element 
 export const BrowserAgent: React.FC<Readonly<BrowserAgentProps>> = ({
   url: initialUrl,
   onClose,
-  actionTrigger,
 }) => {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("");
@@ -536,8 +479,6 @@ export const BrowserAgent: React.FC<Readonly<BrowserAgentProps>> = ({
     }
   }, [initialUrl]);
 
-  const activeTabUrl = activeTab?.url ?? "";
-
   useEffect(() => {
     if (!activeTab) {
       return;
@@ -602,167 +543,6 @@ export const BrowserAgent: React.FC<Readonly<BrowserAgentProps>> = ({
     window.addEventListener("message", handleNavigationMessage);
     return () => window.removeEventListener("message", handleNavigationMessage);
   }, [navigateToUrl]);
-
-  const automateOpen = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const destUrl = typeof args.url === "string" ? args.url : "https://google.com";
-    navigateToUrl(destUrl);
-    callback({ result: `Opening ${getCleanTitleFromUrl(destUrl)} for you now. Let me check what is there.` });
-  }, [navigateToUrl]);
-
-  const automateSearch = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const query = typeof args.query === "string" ? args.query : "";
-    if (!query) {
-      throw new Error("Query text is required.");
-    }
-    const lowered = query.toLowerCase();
-    const isYtRelated = lowered.includes("youtube") || lowered.includes("video") || (activeTabUrl.includes("youtube"));
-    if (isYtRelated) {
-      const cleanYtQ = query.replace(/youtube|search|find|play/gi, "").trim();
-      const finalQ = cleanYtQ || query;
-      navigateToUrl(`https://youtube.com/results?search_query=${encodeURIComponent(finalQ)}`);
-      callback({ result: `Searching YouTube for "${finalQ}" right away.` });
-    } else {
-      navigateToUrl(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
-      callback({ result: `Searching for "${query}" right now. Working on it.` });
-    }
-  }, [activeTabUrl, navigateToUrl]);
-
-  const automateTabAction = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const tabAction = args.action;
-    const startUrl = typeof args.url === "string" ? args.url : "about:blank";
-    const tabId = typeof args.tabId === "string" ? args.tabId : undefined;
-    if (tabAction === "new") {
-      handleNewTab(startUrl);
-      callback({ result: "Opening a new browser tab now." });
-    } else if (tabAction === "close") {
-      handleCloseTab(tabId ?? activeTabId);
-      callback({ result: "Done. Closed the browser tab." });
-    } else if (tabAction === "switch") {
-      if (tabId && tabs.some((t) => t.id === tabId)) {
-        setActiveTabId(tabId);
-        callback({ result: "Let's see. Switched to that tab." });
-      } else {
-        callback({ error: "No matching tab code found." });
-      }
-    }
-  }, [activeTabId, handleCloseTab, handleNewTab, tabs]);
-
-  const automateScroll = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const direction = args.direction === "up" ? "up" : "down";
-    const amount = typeof args.amount === "number" ? args.amount : 350;
-    const win = iframeRef.current?.contentWindow;
-    if (!win) {
-      callback({ error: "Cannot automate scrolling on empty home tab." });
-      return;
-    }
-    win.scrollBy({ top: direction === "down" ? amount : -amount, behavior: "smooth" });
-    callback({ result: `Working on it. Scrolled the browser view ${direction}.` });
-  }, []);
-
-  const automateType = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const text = typeof args.text === "string" ? args.text : "";
-    const doc = iframeRef.current?.contentWindow?.document;
-    if (!doc) {
-      callback({ error: "No website active to command typing." });
-      return;
-    }
-    const inputEl = findInput(doc);
-    if (!inputEl) {
-      callback({ error: "Could not find a secure input block to target typing." });
-      return;
-    }
-    typeIntoElement(inputEl, text);
-    callback({ result: `Typing in "${text}" for you.` });
-  }, []);
-
-  const automateClick = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const selector = typeof args.selector === "string" ? args.selector : "";
-    const doc = iframeRef.current?.contentWindow?.document;
-    if (!doc) {
-      callback({ error: "Browser viewport frame empty." });
-      return;
-    }
-    const element = findClickable(doc, selector);
-    if (!element) {
-      callback({ error: `Could not identify any element resembling "${selector}".` });
-      return;
-    }
-    element.click();
-    callback({ result: "Success. Clicked the selected item." });
-  }, []);
-
-  const automateMedia = useCallback((args: Record<string, unknown>, callback: (res: unknown) => void) => {
-    const action = typeof args.action === "string" ? args.action : "";
-    const value = typeof args.value === "number" ? args.value : undefined;
-    const win = iframeRef.current?.contentWindow;
-    if (!win) {
-      callback({ error: "Active streaming panel is empty." });
-      return;
-    }
-    const video = win.document.querySelector("video") as HTMLVideoElement | null;
-    if (video) {
-      if (action === "play") {
-        void video.play();
-      } else if (action === "pause") {
-        video.pause();
-      } else if (action === "volume") {
-        video.volume = value !== undefined ? value / 100 : 0.75;
-      } else if (action === "mute") {
-        video.muted = true;
-      } else if (action === "unmute") {
-        video.muted = false;
-      } else if (action === "skip") {
-        video.currentTime += 30;
-      }
-      callback({ result: `Done. Executed player action: ${action}.` });
-      return;
-    }
-    const targetOrigin = getMessageTargetOrigin(activeTabUrl || window.location.href);
-    win.postMessage(
-      JSON.stringify({
-        event: "command",
-        func: getYoutubeEmbedFunc(action, value),
-        args: action === "volume" ? [value] : [],
-      }),
-      targetOrigin,
-    );
-    callback({ result: "Done. Sent playing command to YouTube." });
-  }, [activeTabUrl]);
-
-  useEffect(() => {
-    if (!actionTrigger) {
-      return;
-    }
-    const { type, args, callback } = actionTrigger;
-    log(`[Wilco Browser Hub] Automated Voice Trigger: ${type}`, args);
-    const handlers: Record<string, (a: Record<string, unknown>, cb: (res: unknown) => void) => void> = {
-      browserOpen: automateOpen,
-      browserSearch: automateSearch,
-      browserTabAction: automateTabAction,
-      browserScroll: automateScroll,
-      browserType: automateType,
-      browserClick: automateClick,
-      browserMediaControl: automateMedia,
-    };
-    const runVoiceAutomation = async () => {
-      try {
-        const handler = handlers[type];
-        if (type === "browserGoBack") {
-          handleBack();
-          callback({ result: "Let me go back to the previous webpage for you." });
-          return;
-        }
-        if (!handler) {
-          callback({ error: `Automation command ${type} is not implemented.` });
-          return;
-        }
-        handler((args ?? {}) as Record<string, unknown>, callback as (res: unknown) => void);
-      } catch (err: unknown) {
-        callback({ error: `Visual automation exception: ${safeMessage(err)}` });
-      }
-    };
-    void runVoiceAutomation();
-  }, [actionTrigger, automateClick, automateMedia, automateOpen, automateScroll, automateSearch, automateTabAction, automateType, handleBack]);
 
   const renderMainContent = (): React.JSX.Element => {
     if (activeTab?.url === "about:blank" || !activeTab) {

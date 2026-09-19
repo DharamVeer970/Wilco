@@ -11,6 +11,7 @@ from rapidfuzz import fuzz, process
 
 import events
 import windows.apps as apps
+import windows.browser as browsers
 import windows.files as files
 from core import agent, context, online
 import windows.shell as shell
@@ -401,8 +402,15 @@ def _answer_source(what, query):
     return True
 
 
+def _answer_voice(what, query):
+    """The answer to "which voice?" — a name, a number, or a word for the kind of voice."""
+    chosen = _match_option(query, what[1]) or voice.resolve(query)
+    return offer_voice(chosen) if chosen else False
+
+
 ANSWERS = {"confirm": _answer_confirm, "app": _answer_app, "folder": _answer_folder,
-           "files": _answer_files, "pick": _answer_pick, "online": _answer_online}
+           "files": _answer_files, "pick": _answer_pick, "online": _answer_online,
+           "voice": _answer_voice}
 
 
 def _answer_pending(what, query):
@@ -414,7 +422,7 @@ def _do_site(target):
     if target.lower() not in SITES:
         return False
     speak(f"Opening {target}.")
-    webbrowser.open(SITES[target.lower()])
+    webbrowser.open(browsers.announce(SITES[target.lower()]))
     return True
 
 
@@ -482,6 +490,31 @@ def _do_speech_speed(target):
         level = now - step if SLOWER.search(target) else now + step
     speak(f"Talking at {voice.set_speed(level)} percent now.")
     return True
+
+
+def offer_voice(name):
+    """Switch voice in one line — or ask which of the near misses was meant, and stay ready.
+
+    The near-miss question is remembered here rather than left to the model: the answer ("swara")
+    then lands on this path too, so a rate-limited brain can't leave the voice half-changed. One
+    plausible reading isn't a question at all — set_voice takes it and says which it settled on.
+    """
+    from mcp_tool.voice import set_voice
+    global _pending
+    if voice.resolve(name) is None:
+        near = voice.candidates(name)
+        if len(near) > 1:
+            _pending = ("voice", near)
+    speak(set_voice(name))
+    return "command"
+
+
+def ask_voice():
+    """Which voice? — the names in one line, and the answer comes back to offer_voice()."""
+    global _pending
+    _pending = ("voice", list(voice.VOICES))
+    speak("Which voice? " + ", ".join(voice.VOICES) + ".")
+    return "command"
 
 
 def _do_brightness(target):

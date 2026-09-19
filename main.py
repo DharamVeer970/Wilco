@@ -46,6 +46,22 @@ logging.getLogger("comtypes.client._code_cache").addFilter(_ComtypesFilter())
 log = logging.getLogger("wilco")
 
 
+def _thread_died(args):
+    """A thread that ends on an exception says which one, in wilco.log, instead of on the console.
+
+    Wilco runs the microphone, the frontend, the greeting and the voice engine on their own
+    threads, and a bare traceback from one of them — "Traceback (most recent call last):" and
+    nothing else — gives no clue which part of the program raised it, or what it was doing. This
+    puts the thread's name beside it and writes the whole thing where the scrollback can't lose it.
+    """
+    name = getattr(args.thread, "name", "?")
+    log.error("thread %s died: %r", name, args.exc_value,
+              exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+
+threading.excepthook = _thread_died
+
+
 def _listen_forever():
     """Queue one utterance at a time, and never queue Wilco's own voice."""
     while True:

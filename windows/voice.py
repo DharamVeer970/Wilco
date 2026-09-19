@@ -74,6 +74,9 @@ _busy = threading.Event()
 # after instead, and drops a phrase that overlaps a reply rather than queueing the reply as the
 # next command, over and over.
 _spoken = 0
+# Set by stop() to abort an in-progress reply. Checked by both _speak_local (SAPI) and
+# _play (MCI) so a user can cut Wilco off mid-sentence from the UI or by voice.
+_stop_event = threading.Event()
 
 
 def _sapi():
@@ -119,9 +122,15 @@ def spoken_count():
 
 
 def use(name):
-    """Switch voice pack. Returns the name switched to, or None if there's no such voice."""
-    chosen = _resolve(name)
-    if chosen:
+    """Switch voice pack. Returns the name switched to, or None if there's no such voice.
+
+    Switching to the voice already in use announces nothing. The frontend mirrors every voice
+    event back to this machine as a settings save, so re-announcing a voice it already has
+    would bounce that save straight back here as another event, forever — a page left open was
+    enough to pin a core and make the whole machine crawl.
+    """
+    chosen = resolve(name)
+    if chosen and chosen != _state["voice"]:
         _state["voice"] = chosen
         name, voice_id, description, speed = current()
         events.emit("voice", name=name, id=voice_id, description=description, speed=speed)
@@ -170,21 +179,77 @@ CHARACTER_VOICE_ALIASES = {
 }
 
 
-def _resolve(name):
-    """Match what was said to a voice pack — by name, by accent, or near enough."""
+# The words people put around a voice name — "switch your voice TO the SWARA voice". Stripped from
+# both sides before anything is compared, so a sentence can be handed over whole.
+VOICE_FILLER = re.compile(
+    r"\b(?:change|switch|set|use|pick|make|put|speak|talk|speaking|talking|say|saying|"
+    r"voices?|packs?|your|my|the|a|an|of|for|to|as|in|into|like|is|named|called|"
+    r"please|now|wilco|sounds?|me|it|one|ones|that|this|instead|any|some)\b")
+# How close a spoken name has to be before it is taken as that voice, without asking again.
+# Deliberately strict: at 65 "sora" is as close to sonia as it is to swara, and a voice nobody
+# asked for is worse than one short question. See candidates() for the ones that fall short.
+CONFIDENT = 80
+
+
+def _voice_words(name):
+    """The words of a spoken voice request that could be a name: "change it to swara" -> "swara"."""
+    plain = re.sub(r"[^\w\s]", " ", str(name or "").lower())
+    return " ".join(word for word in VOICE_FILLER.sub(" ", plain).split() if len(word) > 1)
+
+
+def spoken_name(name):
+    """What the user actually called the voice, once the words around it are gone.
+
+    "the swara voice" -> "swara". Public so a caller can tell a name it recognised from one it had
+    to guess at, and say which one it settled on.
+    """
+    return _voice_words(name)
+
+
+def candidates(name, limit=3, cutoff=60):
+    """Voice packs a spoken name might have meant, best first — for asking instead of guessing.
+
+    Kept apart from resolve() because "close enough to offer" and "close enough to act on" are not
+    the same thing: "swadha" has one plausible reading, "sora" has two.
+    """
+    wanted = _voice_words(name)
+    if not wanted:
+        return []
+    scored = [(pack, max(fuzz.ratio(wanted, pack),
+                         fuzz.partial_ratio(wanted, pack) if len(wanted) > len(pack) else 0))
+              for pack in VOICES]
+    # sorted() is stable, so equally close packs keep the order the list has always been read in
+    return [pack for pack, score in sorted(scored, key=lambda pair: -pair[1])
+            if score >= cutoff][:limit]
+
+
+def resolve(name):
+    """The voice pack a name means — by pack name, by avatar name, by accent, or near enough."""
     wanted = str(name or "").strip().lower()
     if wanted in CHARACTER_VOICE_ALIASES:
         return CHARACTER_VOICE_ALIASES[wanted]
     if wanted in VOICES:
         return wanted
-    if not wanted:
+    spoken = _voice_words(wanted)
+    if not spoken:
         return None
-    labels = {n: f"{n} {i} {d}".lower() for n, (i, d) in VOICES.items()}
-    spoken_id = next((n for n, label in labels.items() if wanted in label), None)
-    if spoken_id:
-        return spoken_id
-    best = process.extractOne(wanted, labels, scorer=fuzz.token_set_ratio, score_cutoff=60)
-    return best[2] if best else None
+    if spoken in CHARACTER_VOICE_ALIASES:
+        return CHARACTER_VOICE_ALIASES[spoken]
+    if spoken in VOICES:
+        return spoken
+    labels = {pack: _voice_words(f"{pack} {voice_id} {description}")
+              for pack, (voice_id, description) in VOICES.items()}
+    by_label = next((pack for pack, label in labels.items() if spoken in label), None)
+    if not by_label:
+        # "a British accent", "something warm": one word of it naming a kind of voice is enough.
+        by_label = next((pack for word in spoken.split() if len(word) > 3
+                         for pack, label in labels.items() if word in label), None)
+    if by_label:
+        return by_label
+    options = {pack: pack for pack in VOICES}
+    options.update(CHARACTER_VOICE_ALIASES)  # avatar names the frontend sends ("blaze", "kore")
+    best = process.extractOne(spoken, options, scorer=fuzz.ratio, score_cutoff=CONFIDENT)
+    return options[best[2]] if best else None
 
 
 def speak(text):
@@ -217,6 +282,15 @@ def speak(text):
                 _speak_local(text, voice_id)
             else:
                 _speak_neural(text, voice_id)
+        except Exception as e:
+            # The user is waiting for a line, not for a stack trace: a synthesis that fails (no
+            # network, a stalled voice, a clip Windows refuses to play) is said by the built-in
+            # Windows voice instead, so the turn still ends in words.
+            print(f"voice: {_state['voice']} failed to speak ({e}) — using the Windows voice.")
+            try:
+                _speak_local(text, LOCAL)
+            except Exception as fallback:
+                print("voice: the built-in Windows voice failed too:", fallback)
         finally:
             _busy.clear()
             events.emit("speak", phase="end", voice=_state["voice"])

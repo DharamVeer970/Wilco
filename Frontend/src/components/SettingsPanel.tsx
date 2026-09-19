@@ -98,7 +98,8 @@ export function SettingsPanel({ isOpen, onClose, settings, onChange, onVoiceChan
         const data = await res.json();
         setAgentHealth({
           online: true,
-          toolCount: Array.isArray(data.voices) ? data.voices.length : undefined,
+          // How many tools the agent can actually call, straight from its registry.
+          toolCount: typeof data.toolCount === "number" ? data.toolCount : undefined,
         });
       } catch {
         setAgentHealth({ online: false });
@@ -255,8 +256,8 @@ export function SettingsPanel({ isOpen, onClose, settings, onChange, onVoiceChan
                         >
                           <option className="bg-slate-900 text-white" value="">Dynamic CSS Mesh (Default)</option>
                           <option className="bg-slate-900 text-white" value="solid">Solid Theme Color</option>
-                          <option className="bg-slate-900 text-white" value="bg-6.mp4">Cinematic Scene (1)</option>
-                          <option className="bg-slate-900 text-white" value="bg-7.mp4">Cinematic Scene (2)</option>
+                          <option className="bg-slate-900 text-white" value="idle.webm">Orb Motion — Calm (Video 1)</option>
+                          <option className="bg-slate-900 text-white" value="talking.webm">Orb Motion — Live (Video 2)</option>
                         </select>
                       </div>
 
@@ -421,7 +422,20 @@ export function SettingsPanel({ isOpen, onClose, settings, onChange, onVoiceChan
                               <select
                                 id="settings-mic-device"
                                 value={settings.micDeviceId}
-                                onChange={(e) => onChange({ micDeviceId: e.target.value })}
+                                onChange={(e) => {
+                                  // Two ids for one choice, because two machines are listening. The
+                                  // browser needs the opaque deviceId; the Python microphone needs
+                                  // the name, since ids mean nothing outside this tab.
+                                  const chosenId = e.target.value;
+                                  const chosenLabel =
+                                    mics.find((m) => m.deviceId === chosenId)?.label ?? "";
+                                  onChange({ micDeviceId: chosenId, micDeviceLabel: chosenLabel });
+                                  void fetch("/api/settings", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ micDevice: chosenLabel }),
+                                  }).catch(() => {});
+                                }}
                                 className="w-full bg-black/60 border-b border-cyan-500/30 text-cyan-300 font-mono text-sm py-2 px-3 focus:outline-none focus:border-cyan-400 appearance-none"
                               >
                                 <option value="">System Default Audio Stream</option>

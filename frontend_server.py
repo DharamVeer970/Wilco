@@ -36,8 +36,8 @@ import events
 # never asked for it. Everything the bridge needs is therefore already loaded by the time the
 # socket opens, and a handler only ever queues and answers.
 from core import commands
-from mcp_tool import gate
-from windows import voice
+from mcp_tool import TOOLS, gate
+from windows import speech, voice
 
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "Frontend" / "dist"
@@ -130,6 +130,8 @@ def snapshot():
         "model": config.chat_model,
         "alwaysAct": config.ALWAYS_ACT,
         "mic": listening,
+        "micDevice": speech.current_device(),
+        "toolCount": len(TOOLS),
         "voices": voices(),
         "watchers": events.subscribers(),
     }
@@ -207,8 +209,6 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_json({"voices": voices()})
         if path == "/api/memories":
             return self._send_json(memories())
-        if path == "/api/config":
-            return self._send_json({"hasApiKey": True, "configured": True})
         return self._send_file(path)
 
     def _stream(self):
@@ -420,7 +420,15 @@ class _Handler(BaseHTTPRequestHandler):
         return self._send_json({"ok": True, "result": result})
 
     def _settings(self, body):
-        """Apply the settings screen's save. Only the parts that live on this machine."""
+        """Apply the settings screen's save. Only the parts that live on this machine.
+
+        Both halves are applied rather than whichever key came first: the page posts its whole
+        settings blob on every change, so a save carrying a voice and a microphone has to set both.
+        A microphone arrives as a name, because the browser's device id is an opaque per-origin
+        hash that identifies nothing on this side.
+        """
+        if "micDevice" in body or "micDeviceLabel" in body:
+            speech.use_device(body.get("micDevice") or body.get("micDeviceLabel") or "")
         return self._voice(body)
 
     def _add_memory(self, body):
@@ -531,5 +539,7 @@ npm run build</pre>
 """
 
 
-if __name__ == "__main__":
-    serve()
+# No standalone entry point on purpose. `python main.py` is the only thing that ever starts
+# this server (see _serve_frontend in main.py) — that way there is exactly one process bound
+# to the UI port, and UI changes are made here and picked up by main.py on its next run.
+# The serve()/serve_in_background() functions above remain importable for tests and tooling.

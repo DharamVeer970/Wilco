@@ -66,13 +66,39 @@ async def _connect_all():
                 }
 
 
+def _dispose(loop):
+    """Shut a throwaway loop down the way asyncio.run does, instead of just closing it.
+
+    A loop closed with the streaming HTTP client still open loses the response body's
+    reader: closing the loop drops the finaliser already queued for httpx's
+    Response.aiter_bytes generator, so its aclose is never awaited and the athrow task
+    never runs. Both are printed at interpreter exit as
+    "Task was destroyed but it is pending!" and
+    "coroutine method 'aclose' of 'Response.aiter_bytes' was never awaited".
+    Cancelling what is left, then closing the generators while the loop is still alive,
+    disposes of them here — quietly, where the connection actually ended.
+    """
+    try:
+        leftover = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in leftover:
+            task.cancel()
+        if leftover:
+            loop.run_until_complete(asyncio.gather(*leftover, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.run_until_complete(loop.shutdown_default_executor())
+    except Exception as e:  # a loop about to be thrown away is never worth a crash
+        print(f"MCP: event loop cleanup failed ({type(e).__name__}: {e})")
+    finally:
+        loop.close()
+
+
 def _run_async(coro):
     """Run an async coroutine in a new event loop (for use from sync code)."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
     finally:
-        loop.close()
+        _dispose(loop)
 
 
 def _ensure_connected():

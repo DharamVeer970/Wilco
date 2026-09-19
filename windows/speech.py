@@ -33,6 +33,9 @@ r.dynamic_energy_threshold = True
 
 _calibrated = False
 _backend = None
+# The capture device to record from, matched by name against the system's own list. "" means
+# whatever Windows has set as default, which is what the microphone has always used.
+_device = ""
 _SESSION = requests.Session()
 _HF_CLIENTS: dict[str, InferenceClient] = {}
 
@@ -153,6 +156,91 @@ def _recognition_error_message(error):
     return "I didn't catch that."
 
 
+# Whisper invents lines like these out of silence, room noise, and Wilco's own voice coming back
+# through the speakers — usually in a language nobody in the room is speaking. They arrive looking
+# exactly like commands, so a quiet moment put "Thank you." and "Спасибо." in the queue ahead of
+# the real request and Wilco answered those instead, minutes late. Matched as whole utterances
+# only, never as a phrase inside one: "thank you for opening the file" is a real sentence.
+NOISE = {
+    "thank you", "thanks", "thanks a lot", "thank you very much", "thanks for watching",
+    "thank you for watching", "please subscribe", "subscribe", "like and subscribe",
+    "you", "okay", "hmm", "спасибо", "спасибо за просмотр", "продолжение следует",
+    "подписывайтесь", "það er það", "takk fyrir", "sous-titres", "abonnez-vous", "amaraorg",
+    "ご視聴ありがとうございました", "धन्यवाद", "सदस्यता लें", "gracias", "شكرا",
+}
+
+
+def _is_noise(text):
+    """True when a transcription is one of the recogniser's own inventions, not something said.
+
+    Punctuation, case and spacing are ignored; everything else has to match exactly, so a real
+    sentence that happens to contain "thank you" is still a command.
+    """
+    plain = "".join(ch for ch in (text or "").casefold() if ch.isalnum() or ch.isspace())
+    return " ".join(plain.split()) in ("", *NOISE)
+
+
+def _match(names, wanted):
+    """The first of `names` containing `wanted`, case-insensitively. None if nothing matches."""
+    needle = (wanted or "").strip().lower()
+    if not needle:
+        return None
+    return next((name for name in names if needle in str(name).lower()), None)
+
+
+def use_device(spec):
+    """Record from a named device instead of the system default.
+
+    The name comes from the browser's settings screen, because a browser device id is an opaque
+    per-origin hash that means nothing on this side. Sounddevice and PyAudio each keep their own
+    device list and their own indices, so the name is what is stored — and matched again for
+    whichever backend ends up recording.
+
+    Returns the name it settled on. "" means the system default, either because none was asked for
+    or because nothing matched it.
+    """
+    global _device
+    wanted = (spec or "").strip()
+    if not wanted:
+        _device = ""
+        return _device
+    if sd is None:
+        _device = wanted
+        return _device
+    try:
+        matched = _match([d["name"] for d in sd.query_devices()], wanted)
+    except Exception:
+        matched = None
+    # An unmatched name is kept as given: sounddevice matches substrings itself, and its device
+    # list can legitimately be empty until the audio service is up.
+    _device = matched or wanted
+    return _device
+
+
+def current_device():
+    """The capture device the microphone is pointed at. "" means the system default."""
+    return _device
+
+
+def _pyaudio_index():
+    """The chosen device's index in SpeechRecognition's list, which is not sounddevice's.
+
+    The name is matched a second time rather than reusing an index, because the two backends
+    enumerate the same hardware in a different order — handing one list's index to the other would
+    quietly record from the wrong device, which is worse than ignoring the choice.
+    """
+    if not _device:
+        return None
+    try:
+        names = sr.Microphone.list_microphone_names()
+    except Exception:
+        return None
+    for index, name in enumerate(names):
+        if _device.lower() in str(name).lower():
+            return index
+    return None
+
+
 def _listen_with_sounddevice():
     """Record one spoken phrase without PyAudio, using sounddevice's Windows backend."""
     if sd is None:
@@ -166,7 +254,7 @@ def _listen_with_sounddevice():
     frames, started, quiet_blocks = [], False, 0
 
     with sd.RawInputStream(samplerate=sample_rate, blocksize=block_size, channels=1,
-                           dtype="int16") as stream:
+                           dtype="int16", device=_device or None) as stream:
         while time.monotonic() < phrase_deadline:
             block, overflowed = stream.read(block_size)
             if overflowed:
@@ -201,7 +289,7 @@ def take_command():
     try:
         if _backend != "sounddevice":
             try:
-                with sr.Microphone() as source:
+                with sr.Microphone(device_index=_pyaudio_index()) as source:
                     calibrate(source)
                     print("Listening...")
                     audio = r.listen(source, timeout=config.LISTEN_TIMEOUT,
@@ -230,6 +318,11 @@ def take_command():
     except Exception as e:
         print("Speech recognition failed:", e)
         speak(_recognition_error_message(e))
+        return ""
+    if _is_noise(query):
+        # Silence, a fan, or Wilco's own reply through the speakers. Queueing it would make the
+        # next real command wait behind a question nobody asked.
+        print(f"Heard {query!r} — the recogniser filling a silence, ignoring it.")
         return ""
     print(f"User said: {query}")
     return query.strip().lower()

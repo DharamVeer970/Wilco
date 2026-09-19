@@ -67,30 +67,21 @@ export const SudoPopup: React.FC<SudoPopupProps> = ({
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
-  /** Unpredictable approval token — never Math.random for a security decision. */
-  const newApprovalToken = (): string => {
-    const c = globalThis.crypto as Crypto | undefined;
-    if (typeof c?.randomUUID === "function") {
-      return c.randomUUID();
-    }
-    if (typeof c?.getRandomValues === "function") {
-      const bytes = new Uint8Array(8);
-      c.getRandomValues(bytes);
-      return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    }
-    return `approval-${Date.now()}`;
-  };
-
+  /**
+   * Answering a parked action hands back the id of the request being shown. The backend parks
+   * one action per session and ignores the value, so inventing a fresh token here only made the
+   * approval look like it belonged to a different request.
+   */
   const handleApprove = () => {
     if (selectedRequest && onApprove) {
-      onApprove(newApprovalToken());
+      onApprove(selectedRequest.id);
     }
     setSelectedRequest(null);
   };
 
   const handleReject = () => {
     if (selectedRequest && onReject) {
-      onReject(newApprovalToken());
+      onReject(selectedRequest.id);
     }
     setSelectedRequest(null);
   };

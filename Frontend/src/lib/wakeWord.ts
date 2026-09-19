@@ -20,6 +20,8 @@
  *   det.stop();
  */
 
+import { holdMicDevice, releaseMicDevice } from "./micDevice";
+
 // --- Minimal typed shim for the unprefixed SpeechRecognition API -------------
 // The browser types are not in the default lib, so we declare what we use.
 interface SpeechRecognitionLike {
@@ -53,6 +55,8 @@ export interface WakeWordOptions {
   phrase: string;
   /** 0 (strict) .. 100 (loose). Higher = shorter debounce, more matches. */
   sensitivity?: number;
+  /** Preferred capture device, by browser deviceId. Absent or "" = the system default. */
+  deviceId?: string;
   /** Fired once when the phrase is detected. */
   onTriggered?: () => void;
   /** Fired whenever the detector state changes. */
@@ -64,6 +68,8 @@ export class WilcoWakeWordDetector {
   private readonly ctor: SpeechRecognitionCtor | null;
   private phrase = "hey wilco";
   private sensitivity = 60;
+  /** The device the tab listens on, held open while intended. "" = system default. */
+  private deviceId = "";
   private onTriggered: (() => void) | null = null;
   private onState: ((s: WakeWordState) => void) | null = null;
 
@@ -96,12 +102,17 @@ export class WilcoWakeWordDetector {
     }
     this.phrase = (opts.phrase || "hey wilco").toLowerCase().trim();
     this.sensitivity = opts.sensitivity ?? this.sensitivity;
+    this.deviceId = opts.deviceId ?? this.deviceId;
     this.onTriggered = opts.onTriggered ?? null;
     this.onState = opts.onState ?? null;
     // sensitivity 0..100 -> debounce 7000ms..1500ms (higher sens = faster re-arm)
     this.debounceMs = Math.round(7000 - (this.sensitivity / 100) * 5500);
     this.intended = true;
     this.consecutiveErrors = 0;
+    // Recognition records the tab's input device, so the settings choice is made true by holding
+    // a stream on it rather than by asking the recognizer to use it (see lib/micDevice.ts).
+    // Acquired here and not in launch(), which re-arms on every restart.
+    void holdMicDevice(this.deviceId);
     this.launch();
     return true;
   }
@@ -114,6 +125,7 @@ export class WilcoWakeWordDetector {
       this.restartTimer = null;
     }
     this.teardown();
+    releaseMicDevice();
     this.setState("stopped");
   }
 
@@ -126,6 +138,14 @@ export class WilcoWakeWordDetector {
   setSensitivity(value: number): void {
     this.sensitivity = Math.max(0, Math.min(100, value));
     this.debounceMs = Math.round(7000 - (this.sensitivity / 100) * 5500);
+  }
+
+  /** Change the capture device live. Re-holds the stream; the recognizer re-arms on its own. */
+  setDevice(deviceId: string): void {
+    this.deviceId = deviceId;
+    if (this.intended) {
+      void holdMicDevice(deviceId);
+    }
   }
 
   // --- internals --------------------------------------------------------

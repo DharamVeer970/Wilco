@@ -7,13 +7,15 @@ import os
 import re
 import webbrowser
 
+import windows.browser as browsers
 import windows.files as files
 import windows.shell as shell
 from core.commands.patterns import (
     APP_SUFFIX, CANCEL, CODE_WRITE, COMPOSE, DIGIT, DIR_NAMED, DIR_PATH, DOWN, DRIVES,
     FILE_INFO, FILE_SEARCH, IN_WINDOWS, LIST_DRIVES, MEDIA, MEDIA_WORDS, MUTE,
     NAMED_FOLDER, ON_SITE, ONLINE, OPEN, PING, PLAY, RECYCLE, SEARCH, SEARCH_FOR,
-    SETTINGS, SHOW, STRIP, TALK, TYPE, TYPE_SPOKEN, VOLUME, WIFI, BRIGHT, SITES,
+    SETTINGS, SHOW, STRIP, SWITCH_TO, TALK, TYPE, TYPE_SPOKEN, VOICE_CHANGE, VOICE_SET,
+    VOLUME, WIFI, BRIGHT, SITES, voice_wanted,
 )
 from windows.speech import speak
 
@@ -23,7 +25,7 @@ def _step_site(query, _spoken):
     if not site:
         return None
     speak(f"Opening {site}.")
-    webbrowser.open(SITES[site])
+    webbrowser.open(browsers.announce(SITES[site]))
     return "command"
 
 
@@ -156,6 +158,27 @@ def _step_talk_speed(query, _spoken):
     return "command"
 
 
+def _step_voice(query, _spoken):
+    """Changing voice is a lookup, not a conversation — so it is decided here.
+
+    It also has to work when every chat provider is rate-limited, which is exactly when the model
+    path answered "I couldn't reach my brain" and left the voice as it was. Only requests that
+    name something this can actually resolve or offer are taken over; a kind of voice only the
+    model can read ("something that sounds like a newsreader") is still left to it.
+    """
+    if TALK.search(query) or not VOICE_SET.search(query):
+        return None
+    from windows import voice as engine
+    from core.commands import ask_voice, offer_voice
+    switch = SWITCH_TO.match(query)
+    wanted = voice_wanted(query) or (switch.group(1) if switch else "")
+    if not wanted:
+        return ask_voice() if VOICE_CHANGE.search(query) else None
+    if not engine.resolve(wanted) and not engine.candidates(wanted):
+        return None
+    return offer_voice(wanted)
+
+
 def _step_brightness(query, _spoken):
     if not BRIGHT.search(query):
         return None
@@ -286,6 +309,6 @@ def _step_open(query, _spoken):
 STEPS = (_step_site, _step_time, _step_ai, _step_reset_chat, _step_type, _step_show,
          _step_windows_search, _step_folder, _step_file_search, _step_directory,
          _step_drives, _step_file_info, _step_mute, _step_volume, _step_talk_speed,
-         _step_brightness, _step_wifi, _step_media, _step_cancel_shutdown, _step_power,
-         _step_recycle_bin, _step_ping, _step_system_info, _step_kind, _step_play,
-         _step_search, _step_settings, _step_open)
+         _step_voice, _step_brightness, _step_wifi, _step_media, _step_cancel_shutdown,
+         _step_power, _step_recycle_bin, _step_ping, _step_system_info, _step_kind,
+         _step_play, _step_search, _step_settings, _step_open)

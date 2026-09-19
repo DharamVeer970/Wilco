@@ -15,6 +15,7 @@ from html.parser import HTMLParser
 
 import requests
 
+import windows.browser as browsers
 from core import context, online
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -145,7 +146,7 @@ def search_in_browser(query, site="google"):
     if site not in SITES:
         return f"I can only search {', '.join(SITES)}."
     context.query = query
-    webbrowser.open(SITES[site].format(urllib.parse.quote_plus(query)))
+    webbrowser.open(browsers.announce(SITES[site].format(urllib.parse.quote_plus(query))))
     return f"Opened a {site} search for {query} in the browser."
 
 
@@ -402,5 +403,5 @@ _SCHEME = re.compile(r"^https?://")
 def open_website(url):
     """Open a URL in the default browser. url: a full address, or a bare domain like bbc.com."""
     url = "https://" + _SCHEME.sub("", url)  # always the encrypted scheme, whatever was asked for
-    webbrowser.open(url)
+    webbrowser.open(browsers.announce(url))
     return f"Opened {url} in the browser."

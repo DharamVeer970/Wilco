@@ -10,7 +10,8 @@ def list_voices():
     """List every voice Wilco can speak in, with the accent and gender of each, and say which
     one is in use. Call this whenever the user asks what voices there are, or asks for a kind
     of voice rather than a name — a British one, an Indian one, a woman's voice — so that the
-    name you then pass to set_voice is one that actually exists."""
+    name you then pass to set_voice is one that actually exists. Never read this list out unless
+    it was asked for: a reply that lists all thirteen voices is a minute of talking."""
     name, _, _, speed = engine.current()
     described = "; ".join(f"{n} — {d}" for n, (_, d) in engine.VOICES.items())
     return (f"Voices: {described}. Right now Wilco is {name}, talking at {speed:+d}% "
@@ -18,15 +19,29 @@ def list_voices():
 
 
 def set_voice(name):
-    """Switch the voice Wilco speaks in. Your reply to this turn is already spoken in the new
-    voice, so keep it to a short line like "How's this one?" and let them hear it. name: one
-    of ava, andrew, emma, brian, sonia, ryan, neerja, prabhat, natasha, madhur, swara, david,
-    zira. david and zira are the built-in Windows voices — offline and instant, but flat."""
-    chosen = engine.use(name)
-    if not chosen:
-        return (f"There's no voice called {name}. The ones there are: "
-                f"{', '.join(engine.VOICES)}.")
-    return f"Now speaking as {chosen} — {engine.VOICES[chosen][1]}."
+    """Switch the voice Wilco speaks in — pass the user's own word for it, "swara", "swadha",
+    "a British one"; this resolves near misses itself and answers with the one it settled on.
+    Your reply to this turn is already spoken in the new voice, so keep it to the single short
+    line this returns and never read the list of voices out. name: one of ava, andrew, emma,
+    brian, sonia, ryan, neerja, prabhat, natasha, madhur, swara, david, zira, or a word for the
+    kind of voice (hindi, British, Australian, female). david and zira are the built-in Windows
+    voices — offline and instant, but flat."""
+    chosen = engine.resolve(name)
+    guessed = False
+    if chosen is None:
+        near = engine.candidates(name)
+        if len(near) == 1:
+            # One plausible reading is not a question worth asking: switch, and say which.
+            chosen, guessed = near[0], True
+        elif near:
+            return f"No voice called {name}. Did you mean {' or '.join(near)}?"
+        else:
+            return f"No voice called {name}. Mine are: {', '.join(engine.VOICES)}."
+    engine.use(chosen)
+    description = engine.VOICES[chosen][1]
+    if guessed:
+        return f"No voice called {name}; {chosen} is the closest — {description}."
+    return f"Now speaking as {chosen} — {description}."
 
 
 def set_speech_speed(percent: int):

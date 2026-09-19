@@ -6,6 +6,7 @@ import { saveSettings, loadSettings } from "./lib/settingsStore";
 import type { Settings } from "./lib/settingsStore";
 import type { Memory, MemoryCategory } from "./lib/memoryTypes";
 import { WilcoWakeWordDetector } from "./lib/wakeWord";
+import { holdMicDevice, releaseMicDevice } from "./lib/micDevice";
 import { onSpeakEvent, onSpeedEvent } from "./lib/speechbus";
 import type { SpeakPhase } from "./lib/speechbus";
 import { characterForVoice } from "./lib/characters";
@@ -44,13 +45,6 @@ interface TerminalLog {
   time: number;
 }
 
-interface BrowserTrigger {
-  type: string;
-  args: Record<string, unknown>;
-  id: string;
-  callback: (res: unknown) => void;
-}
-
 interface PendingRequest {
   id: string;
   command: string;
@@ -84,20 +78,6 @@ function textLengthOf(value: unknown): number | undefined {
     return value.length;
   }
   return undefined;
-}
-
-function toDisplayPackage(payload: unknown): string | undefined {
-  if (payload === null || payload === undefined) {
-    return undefined;
-  }
-  if (typeof payload === "string") {
-    return payload;
-  }
-  try {
-    return JSON.stringify(payload);
-  } catch {
-    return undefined;
-  }
 }
 
 const WAVE_BASES = [10, 24, 14, 28, 18, 8] as const;
@@ -399,7 +379,6 @@ export default function App() {
   const [activeProjectorUrl, setActiveProjectorUrl] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState<boolean>(false);
   const [errorText, setErrorText] = useState<string | null>(null);
-  const [browserTrigger, setBrowserTrigger] = useState<BrowserTrigger | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [showMemoryDashboard, setShowMemoryDashboard] = useState<boolean>(false);
   const [showTranscriptPanel, setShowTranscriptPanel] = useState<boolean>(false);
@@ -438,6 +417,7 @@ export default function App() {
       det.start({
         phrase: settings.wakePhrase,
         sensitivity: settings.sensitivity,
+        deviceId: settings.micDeviceId,
         onTriggered: () => {
           det.stop();
           connectHandlerRef.current();
@@ -446,12 +426,30 @@ export default function App() {
     } else {
       det.stop();
     }
-  }, [settings.wakeWordEnabled, settings.wakePhrase, settings.sensitivity, state]);
+  }, [settings.wakeWordEnabled, settings.wakePhrase, settings.sensitivity, settings.micDeviceId, state]);
 
   const handleSettingsChange = useCallback((patch: Partial<Settings>) => {
     const next = saveSettings(patch);
     setSettings(next);
   }, []);
+
+  // The Python microphone keeps no copy of this choice — settings live in the browser — so the
+  // tab states it once on load. Without that, restarting the backend would silently send Wilco
+  // back to the system default while the settings screen still showed the chosen device.
+  // Reads the value saved at load on purpose, so this runs once rather than on every change.
+  useEffect(() => {
+    const remembered = settings.micDeviceLabel;
+    if (!remembered) {
+      return;
+    }
+    void fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ micDevice: remembered }),
+    }).catch(() => {
+      /* the backend may not be up yet; changing the device re-states it */
+    });
+  }, [settings.micDeviceLabel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,12 +562,14 @@ export default function App() {
 
   const stopBrowserListening = useCallback(() => {
     stopRecognizer(speechRecognitionRef);
+    // The device stream was held only for recognition; letting go re-releases the microphone.
+    releaseMicDevice();
     setIsListeningInBrowser(false);
     setState("idle");
     setCharacterState("idle");
   }, []);
 
-  const toggleBrowserListening = useCallback(() => {
+  const toggleBrowserListening = useCallback(async () => {
     const SpeechRecognition =
       (window as unknown as Record<string, new () => BrowserRecognizer>).SpeechRecognition ??
       (window as unknown as Record<string, new () => BrowserRecognizer>).webkitSpeechRecognition;
@@ -582,6 +582,10 @@ export default function App() {
       return;
     }
     try {
+      // The recognizer records whatever the tab's input device happens to be, so the settings
+      // choice is made true by holding a stream on it — awaited, so recognition cannot start on
+      // the default device and then hop across mid-sentence (see lib/micDevice.ts).
+      await holdMicDevice(settings.micDeviceId);
       const recognizer = new SpeechRecognition();
       recognizer.continuous = false;
       recognizer.interimResults = true;
@@ -622,13 +626,13 @@ export default function App() {
       setIsListeningInBrowser(false);
       setState("idle");
     }
-  }, [isListeningInBrowser, stopBrowserListening, submitCommand]);
+  }, [isListeningInBrowser, settings.micDeviceId, stopBrowserListening, submitCommand]);
 
   const handleToggleConnection = useCallback(() => {
     if (isListeningInBrowser || state === "listening") {
       stopBrowserListening();
     } else {
-      toggleBrowserListening();
+      void toggleBrowserListening();
     }
   }, [isListeningInBrowser, state, stopBrowserListening, toggleBrowserListening]);
 
@@ -682,7 +686,9 @@ export default function App() {
         setState("speaking");
         setCharacterState("talking");
       } else if (val === "thinking") {
-        setState("speaking");
+        // "thinking" is a state the UI knows (see lib/audio.ts) and the snapshot already reports
+        // it as itself, so an event must not claim Wilco is mid-sentence while it is composing.
+        setState("thinking");
         setCharacterState("thinking");
       } else if (val === "listening") {
         setState("listening");
@@ -770,17 +776,24 @@ export default function App() {
       if (!data) {
         return;
       }
-      const record = data as { token?: string; action?: string; payload?: unknown };
+      // mcp_tool/gate.py emits {pending, approved?, description}. There is no token on the wire:
+      // the parked action is keyed by session, not by an id the browser can hand back.
+      const record = data as { pending?: boolean; approved?: boolean; description?: string };
+      const description = record.description ?? "Action Requires Approval";
+      if (record.pending === false) {
+        // Answered — by a click or by a word — so the decision stops being shown as unanswered.
+        setPendingRequests((prev) => prev.filter((p) => p.command !== description));
+        return;
+      }
       const req: PendingRequest = {
-        id: record.token ?? String(Date.now()),
-        command: record.action ?? "Action Requires Approval",
-        package: toDisplayPackage(record.payload),
+        id: createId("confirm"),
+        command: description,
         requestedBy: "Wilco AI",
         timestamp: new Date(),
         expiresAt: new Date(Date.now() + 60000),
         status: "pending",
       };
-      setPendingRequests((prev) => [...prev.filter((p) => p.id !== req.id), req]);
+      setPendingRequests((prev) => [...prev.filter((p) => p.command !== req.command), req]);
     };
 
     const handleVoice = (e: MessageEvent) => {
@@ -788,6 +801,15 @@ export default function App() {
       const name = (data as { name?: string } | null)?.name;
       if (name) {
         handleSettingsChange({ voice: name });
+      }
+    };
+
+    /** The backend opened a page; show it in the projector rather than only in a real browser. */
+    const handleBrowser = (e: MessageEvent) => {
+      const data = parseJson(e.data);
+      const url = (data as { url?: string } | null)?.url;
+      if (typeof url === "string" && url) {
+        setActiveProjectorUrl(url);
       }
     };
 
@@ -807,6 +829,7 @@ export default function App() {
       sse.addEventListener("tool", handleTool);
       sse.addEventListener("confirm", handleConfirm);
       sse.addEventListener("voice", handleVoice);
+      sse.addEventListener("browser", handleBrowser);
       sse.addEventListener("error", () => {
         setIsBackendConnected(false);
         sse?.close();
@@ -834,7 +857,6 @@ export default function App() {
 
   const closeProjector = useCallback(() => {
     setActiveProjectorUrl(null);
-    setBrowserTrigger(null);
   }, []);
 
   const handleChatSubmit = useCallback(
@@ -1041,7 +1063,7 @@ export default function App() {
 
       <AnimatePresence>
         {activeProjectorUrl && (
-          <BrowserAgent url={activeProjectorUrl} onClose={closeProjector} actionTrigger={browserTrigger} />
+          <BrowserAgent url={activeProjectorUrl} onClose={closeProjector} />
         )}
       </AnimatePresence>
 
